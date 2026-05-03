@@ -34,7 +34,7 @@ python3 scripts/node_health/node_health_check.py --report-dir /var/log/fno-healt
 
 Both scripts use Python 3 stdlib only — no pip dependencies.
 
-### Section 4 — Security (`SECURITY.md`)
+### Section 4 — Security (`notes/SECURITY.md`)
 Key storage (KMS + Vault), rotation procedure, and incident response answers.
 
 ---
