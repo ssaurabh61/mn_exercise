@@ -1,0 +1,19 @@
+[Unit]
+Description=Cardano DB Sync
+After=network.target postgresql.service cardano-node.service
+
+[Service]
+User=cardano
+Group=cardano
+Type=simple
+Environment=PGHOST=127.0.0.1
+Environment=PGPORT=5432
+Environment=PGUSER=cardano
+Environment=PGPASSWORD=changeme
+Environment=PGDATABASE=cardano
+ExecStart=/usr/local/bin/cardano-db-sync --config /etc/cardano/db-sync-config.yaml --socket-path /var/lib/cardano/node/node.socket
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
