@@ -1,0 +1,29 @@
+{
+  "operators": [
+    {
+      "id": "fno-alpha",
+      "name": "Alpha Node Ops",
+      "key_endpoint": "https://raw.githubusercontent.com/ssaurabh61/mn_exercise/main/scripts/mock_keys/fno-alpha.json"
+    },
+    {
+      "id": "fno-bravo",
+      "name": "Bravo Staking",
+      "key_endpoint": "https://raw.githubusercontent.com/ssaurabh61/mn_exercise/main/scripts/mock_keys/fno-bravo.json"
+    },
+    {
+      "id": "fno-charlie",
+      "name": "Charlie Validators",
+      "key_endpoint": "https://raw.githubusercontent.com/ssaurabh61/mn_exercise/main/scripts/mock_keys/fno-charlie.json"
+    },
+    {
+      "id": "fno-delta",
+      "name": "Delta Pool",
+      "key_endpoint": "https://httpstat.us/503"
+    },
+    {
+      "id": "fno-echo",
+      "name": "Echo Infrastructure",
+      "key_endpoint": "https://httpstat.us/408"
+    }
+  ]
+}

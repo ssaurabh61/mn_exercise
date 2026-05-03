@@ -15,7 +15,24 @@ Full end-to-end runbook for onboarding as an FNO on preprod. Covers WSL 2 setup 
 Prometheus + Grafana + Alertmanager stack deployed via Docker Compose. Three alerts chosen for signal-over-noise: chain stall, low peer count, and service crash. Full config files included.
 
 ### Section 3 — Automation (`scripts/`)
-Node health checker script (`node_health_check.py`) that polls Prometheus endpoints for all three services, evaluates health conditions, writes timestamped JSON reports to disk, and diffs regressions against the previous report. Exit codes make it cron/CI-friendly.
+Two scripts — one per assessment option:
+
+**Option A — `scripts/key_collection/fno_key_collection.py`** — Given a list of FNO operator identifiers (`operators.json`), fetches each operator's public key from their configured endpoint, writes a timestamped JSON + CSV report, and persists state so re-runs skip operators who already responded. Idempotent by design; `--retry` forces a full re-collection.
+
+```
+python3 scripts/key_collection/fno_key_collection.py
+python3 scripts/key_collection/fno_key_collection.py --retry           # re-request all operators
+python3 scripts/key_collection/fno_key_collection.py --timeout 30      # slower network
+```
+
+**Option C — `scripts/node_health/node_health_check.py`** — Polls Prometheus endpoints for all three FNO services, evaluates health conditions, writes timestamped JSON reports, and diffs regressions against the previous run. Exit codes make it cron/CI-friendly.
+
+```
+python3 scripts/node_health/node_health_check.py
+python3 scripts/node_health/node_health_check.py --report-dir /var/log/fno-health
+```
+
+Both scripts use Python 3 stdlib only — no pip dependencies.
 
 ### Section 4 — Security (`SECURITY.md`)
 Key storage (KMS + Vault), rotation procedure, and incident response answers.
