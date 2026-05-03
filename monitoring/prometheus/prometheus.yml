@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # System metrics (CPU, memory, disk)
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["host.docker.internal:9100"]
+
+  # Cardano relay node
+  # hasPrometheus must be enabled in cardano-node config.json: ["127.0.0.1", 12798]
+  - job_name: cardano-node
+    static_configs:
+      - targets: ["host.docker.internal:12798"]
+
+  # cardano-db-sync
+  - job_name: cardano-db-sync
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+
+  # Midnight node (Substrate default metrics port)
+  - job_name: midnight-node
+    static_configs:
+      - targets: ["host.docker.internal:9615"]

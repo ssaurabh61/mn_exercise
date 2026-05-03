@@ -1,0 +1,48 @@
+groups:
+  - name: fno_alerts
+    rules:
+
+      # Alert 1: Chain stall — node has not added a block in 10 minutes
+      # This is the primary health signal for a validator. A stalled chain means
+      # the node is not following consensus regardless of other metrics being healthy.
+      - alert: CardanoChainStall
+        expr: increase(cardano_node_metrics_blockNum_int[10m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cardano node has not added a block in 10 minutes"
+          description: >
+            Block height has been static for 10+ minutes. Node is not following the chain.
+            Check peer count alert — isolation is the most common cause.
+            Response: check journalctl -u cardano-node, verify peer count, restart if no clear cause.
+
+      # Alert 2: Low peer count — fewer than 3 connected peers for 5 minutes
+      # Leading indicator that fires before a chain stall occurs, giving time to act.
+      # With <3 peers the node is at risk of diverging from the main chain.
+      - alert: CardanoLowPeerCount
+        expr: cardano_node_metrics_connectedPeers_int < 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cardano node has fewer than 3 connected peers"
+          description: >
+            Peer count is {{ $value }}. Node is approaching network isolation.
+            Response: check connectivity on port 3001, verify topology config,
+            add more reliable relay peers if persistently low.
+
+      # Alert 3: Service down — any FNO service not responding to Prometheus scrapes
+      # Catches any crash regardless of cause (OOM, segfault, config error, manual stop).
+      # The 2-minute for: window avoids false positives during planned restarts.
+      - alert: ServiceDown
+        expr: up{job=~"cardano-node|cardano-db-sync|midnight-node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} is not responding"
+          description: >
+            Service {{ $labels.job }} has been unreachable for 2+ minutes — process likely crashed.
+            Response: systemctl status {{ $labels.job }}, check exit code and last log lines,
+            restart if transient — investigate before restarting if it was an OOM kill.

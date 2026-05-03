@@ -287,6 +287,13 @@ This phase is split into two parts:
 - **Part A** can be done immediately — install binaries, schema and config, deploy the service unit.
 - **Part B** must wait until the cardano-node ledger replay finishes and its socket is available.
 
+> **Optional fast-track — restore from a db-sync snapshot instead of syncing from scratch:**  
+> IOG publishes `pg_dump` snapshots of the fully-synced `cexplorer` database at:  
+> `https://update-cardano-mainnet.iohk.io/cardano-db-sync/index.html#13.6/`  
+> Restoring one of these with `pg_restore` would skip the 6–8 hour sync entirely — db-sync would resume from the snapshot's last block rather than epoch 0. This is the db-sync equivalent of what Mithril did for the raw chain data.  
+>  
+> **Why we didn't use it:** the Midnight FNO docs don't reference it; preprod snapshot availability is less consistently maintained than mainnet; and the snapshot must exactly match the db-sync schema version (13.6.0.7) — a version mismatch causes a failed restore with no clear error. For a first-time setup following docs, syncing from scratch is safer and more reproducible. For a production or time-sensitive onboarding, checking the snapshot index first is worth doing.
+
 ### Phase 6A — Install binaries, schema, config and service unit
 > Do this now, in parallel with the node replay.
 
