@@ -418,6 +418,14 @@ midnight-node key generate --scheme ed25519 --output-type json > grandpa.json
 midnight-node key generate --scheme ecdsa   --output-type json > cross_chain.json
 chmod 600 aura.json grandpa.json cross_chain.json
 
+# > **Production note:** The commands above store raw key material as plaintext JSON files.
+# > For a production validator, signing keys (aura, grandpa, cross_chain) should be backed
+# > by a remote signing service (Cloud KMS, HSM, or a dedicated signing sidecar) so that
+# > private key material never touches the node host's disk. The JSON files are acceptable
+# > for preprod onboarding; see [`notes/SECURITY.md`](SECURITY.md) for the recommended
+# > production architecture (KMS-backed signing, Vault for auxiliary secrets, systemd
+# > LoadCredential= injection).
+
 # Generate network identity key (P2P PeerID)
 NETWORK="preprod"
 NETWORK_DIR="$HOME/data/chains/midnight_${NETWORK}/network"
