@@ -1,116 +1,73 @@
-# Security & Key Management — Midnight FNO Preprod
+# Security & Key Management — Midnight FNO
 
-> This document addresses Section 4 of the Midnight DevOps assessment.  
-> Context: Midnight FNO nodes use three registered cryptographic key pairs — aura (sr25519, block authoring), grandpa (ed25519, finality), and cross_chain (ecdsa, Cardano bridge). Loss or compromise of any of these could disrupt the operator's participation in consensus or expose signed cross-chain transactions.
+> Section 4 of the Midnight DevOps assessment.  
+> FNO nodes have three registered key pairs: `aura` (sr25519, block authoring), `grandpa` (ed25519, finality), `cross_chain` (ecdsa, Cardano bridge). Compromise of any of them can disrupt consensus participation or expose signed cross-chain transactions.
 
 ---
 
-## 1. Key Storage in Production Cloud
+## 1. Key Storage
 
-### Recommended approach: Cloud KMS for signing, Vault for secret distribution
-
-**Cloud KMS (AWS KMS / GCP Cloud KMS / Azure Key Vault)**
-- The private key material never leaves the KMS boundary — signing operations are submitted to the KMS API and only the signature is returned
-- Keys are backed by FIPS 140-2 Level 2 HSMs (Level 3 with Dedicated HSM tiers)
-- Full audit trail via CloudTrail / Cloud Audit Logs — every signing operation is logged
-- IAM policies restrict which service accounts / EC2 roles can invoke the sign operation
-- Tradeoff: adds ~10–50ms latency per signing call; acceptable for block authoring timescales (slots are 1s on Cardano)
-- **Multi-Region keys** (AWS KMS MRK / GCP Cloud KMS replication) replicate key material to a secondary region (e.g. London → Frankfurt). A total regional outage does not prevent signing or rotation once the node is recovered — the replica in the secondary region is immediately usable without any re-import or break-glass procedure
-
-**AWS CloudHSM / Azure Dedicated HSM (if FIPS 140-2 Level 3 is required)**
-- Key material is truly single-tenant and never shared with the cloud provider
-- Required for regulatory compliance (financial services, government)
-- Significantly more expensive (~$1.5k/month) and operationally complex
-- Tradeoff: overkill for most FNO operators; adds operational burden without meaningful security improvement if the threat model is external compromise (not insider/cloud-provider threat)
-
-**AWS Nitro Enclaves (for isolated signing services)**
-- Nitro Enclaves carve out an isolated, memory-encrypted VM within an EC2 instance with no persistent storage, no interactive access, and no network socket — only a local vsock channel to the parent instance
-- Cryptographic attestation (PCR measurements) lets a KMS key policy enforce that the signing service binary hasn't been tampered with before it is permitted to decrypt key material
-- Primary use case here: hosting a custom sr25519 signing service (e.g., a Vault Transit sidecar or a thin Rust service) inside the enclave where the key seed is decrypted only in enclave memory and never exposed to the host OS
-- This closes the gap left by cloud KMS not supporting the Schnorrkel/Ristretto curve natively
-- Tradeoff: requires Nitro Enclaves-enabled instance types (m5n, c5n, r5n, etc.) and building/maintaining the enclave image; attestation document must be validated in the KMS key policy
-
-**HashiCorp Vault (for auxiliary secrets)**
-- Used for distributing secrets to the node process at startup (DB passwords, pgpass, API keys) — not for the cryptographic keys themselves
-- Dynamic secrets (short-lived credentials generated on demand) reduce blast radius if a secret is leaked
-- Vault agent can inject secrets as environment variables or files without the secret ever touching disk unencrypted
-- Tradeoff: requires running and unsealing a Vault cluster — adds another service to operate and secure
-
-**What I would not use:**
-- **Plaintext files on disk** (`~/.local/share/midnight/keystore/*` as static files without encryption at rest) — acceptable for preprod; not acceptable for mainnet
-- **Environment variables in systemd unit files** — visible to any process running as the same user; use `LoadCredential=` or Vault agent injection instead
-- **AWS Secrets Manager for signing keys** — fine for passwords, not designed for asymmetric key material that needs to sign without exporting
-
-### Recommended production layout
-
-```
-Signing keys (aura, grandpa, cross_chain)
-  → Stored in AWS KMS / Cloud HSM
-  → Node calls KMS API to sign; key never exported
-
-Auxiliary secrets (DB password, API tokens)
-  → HashiCorp Vault with dynamic secrets
-  → Vault agent injects at startup via systemd LoadCredential
-
-Key backups (disaster recovery only)
-  → Encrypted with GPG, stored in S3 with Glacier lifecycle policy
-  → Access requires MFA + break-glass procedure with audit log
-```
+The design goal is defence-in-depth: private key material never exists on the node host — it remains confined to KMS/Vault/Enclave boundaries and is never exposed to the node process. All signing operations are auditable, and keys are non-exportable wherever the provider supports it.
 
 ### Tooling by key type
 
 | Key | Curve | Recommended storage |
 |---|---|---|
-| `aura` | sr25519 (Schnorrkel/Ristretto) | HashiCorp Vault Transit Engine — cloud KMS does not support this curve; or a custom signing service running inside **AWS Nitro Enclave** for hardware-attested isolation |
-| `grandpa` | ed25519 | AWS KMS / GCP Cloud KMS (native support) |
-| `cross_chain` | ecdsa (secp256k1) | AWS KMS / GCP Cloud KMS (native support) |
+| `aura` | sr25519 (Schnorrkel/Ristretto) | **Vault Transit Engine** or signing service in an **AWS Nitro Enclave** — cloud KMS has no native support for this curve |
+| `grandpa` | ed25519 | **AWS KMS / GCP Cloud KMS** — native support |
+| `cross_chain` | ecdsa (secp256k1) | **AWS KMS / GCP Cloud KMS** — native support |
+
+**Cloud KMS** is the default for `grandpa` and `cross_chain`. Keys are born inside an HSM boundary and never exported; every signing call is logged in CloudTrail / Cloud Audit Logs. Access is locked to least-privilege IAM roles scoped to the node's instance identity, with KMS endpoints on private subnets only — no public exposure. Use **Multi-Region keys** (AWS MRK or GCP replication) so a regional outage doesn't block signing. KMS availability and latency must be monitored, as signing delays directly affect block production. One practical note: Substrate-based nodes don't natively call cloud KMS APIs — a thin signing adapter or sidecar is required to bridge the node to KMS/Vault. The adapter should run with least privilege, isolated from the node process (separate user or container), and expose only a minimal local interface.
+
+**Vault Transit Engine** handles `aura` signing (sr25519, unsupported by cloud KMS) and also serves as the auxiliary secrets store for DB credentials and API tokens via dynamic secrets and agent injection. Vault must be HA and low-latency to the node — unavailability or high latency during block production directly impacts validator performance.
+
+**AWS Nitro Enclaves** are the stronger option for `aura` when hardware attestation is required. The signing service runs in a memory-encrypted VM with no persistent storage and no SSH access; the key seed is decrypted only in enclave memory. KMS key policies can enforce that decryption is refused unless the enclave's PCR measurements match the known-good binary — host-level compromise can't subvert it. Like Vault, the enclave signer must be highly available; failure during block production causes missed slots.
+
+**CloudHSM** is warranted for FIPS 140-2 Level 3 compliance in regulated environments. Overkill for most FNO operators.
+
+### What not to use
+
+- **Plaintext keystore files** — acceptable for preprod, not for mainnet
+- **Environment variables in systemd units** — use `LoadCredential=` or Vault agent injection
+- **Generating keys on the node** — seed material transiently exists in process memory, swap, and shell history
+
+### Production layout
+
+```
+grandpa / cross_chain  → AWS KMS (non-exportable); node uses signing adapter
+aura                   → Vault Transit or Nitro Enclave signing service (HA required)
+Auxiliary secrets      → Vault dynamic secrets, agent-injected at startup
+Backups                → KMS-managed keys: provider-handled, no manual export needed
+                         Only externally generated keys (e.g., sr25519 seeds): GPG-encrypted, S3/Glacier, MFA + break-glass, with access logged and time-bound
+```
 
 ---
 
 ## 2. Key Rotation
 
-Midnight session keys are registered on-chain. Rotation must be done carefully to avoid a gap in consensus participation or a double-signing window.
+### Signing model — pick one and be explicit about it
+
+**External signer (production):** The node holds no private key material. Signing is delegated to KMS / Vault Transit / Nitro Enclave via a signer service. `author_insertKey` is not used. The signer must be HA and low-latency — unavailability or latency spikes during block production directly impact validator performance.
+
+**Local keystore (preprod / fallback):** Key material is injected into the node via `author_insertKey`, called over the loopback RPC only. The key exists in node memory for the duration of the process. The RPC port must be bound strictly to localhost with OS-level access controls — loopback trust assumes host integrity. This model is not recommended for mainnet.
 
 ### Procedure
 
-1. **Generate the new key pair inside the KMS** — not on the node.
-   Key material must be born inside the KMS hardware boundary and never exported in plaintext. Generating on the node (e.g. `midnight-node key generate`) means the private key transiently exists in process memory, shell history, and potentially swap — all of which can survive process termination and be recovered forensically.
+1. **Generate inside KMS or Vault** — never on the node. For `grandpa`/`cross_chain` use `aws kms create-key`; for `aura` use Vault Transit or a Nitro Enclave. Only the public key leaves this boundary.
 
-   With AWS KMS:
-   ```bash
-   # Create an asymmetric signing key — material never leaves KMS
-   aws kms create-key --key-spec ECC_SECG_P256K1 --key-usage SIGN_VERIFY
-   ```
-   The node calls the KMS sign API at runtime; only the signature is returned, never the key.
+2. **Validate before touching chain state.** Perform a test signature and confirm it verifies against the expected public key. For an external signer, verify API reachability and that signing latency is within block production thresholds. Registering a broken key risks missed blocks with no safe rollback.
 
-   For sr25519 (the Schnorrkel/Ristretto curve used by Aura), AWS KMS and GCP Cloud KMS have no native support. The recommended alternative is the **HashiCorp Vault Transit Engine**: Vault generates and stores the key internally, exposes a sign API, and returns only the signature — keeping the private key out of node process memory entirely. The node authenticates to Vault via a short-lived token (e.g. a Vault-injected AppRole credential) and calls the Transit sign endpoint at block authoring time. If Vault Transit is not available, the fallback is a one-time generation in a hardened ephemeral environment (air-gapped machine, dedicated secrets workstation), immediately sealing the result into Vault's KV store with no plaintext written to disk and shell history suppressed.
+3. **Register the new key with the node.** In the external signer model, update the signer endpoint config. In the local keystore model, call `author_insertKey` over loopback. No restart required in either case. Ensure only one active signing key is in use at any point — having two registered simultaneously is a slashing condition.
 
-2. **Inject the new key into the running node's keystore** via the loopback-only RPC. No node restart is required, and no new node is needed — key rotation is an in-place operation on the same running node. In-place rotation is also preferred specifically to eliminate equivocation risk: if two nodes were running simultaneously with the same registered key during a migration window, both could attempt to author or finalize the same slot, which is a primary slashing condition in the Midnight/Cardano ecosystem. In-place rotation removes this possibility entirely. The mnemonic or private key bytes are passed only over the local loopback interface and held only in node memory:
-   ```bash
-   curl -s -X POST http://localhost:9944 \
-     -H "Content-Type: application/json" \
-     -d '{"id":1,"jsonrpc":"2.0","method":"author_insertKey","params":["aura","<mnemonic>","<public_key>"]}'
-   ```
+4. **Submit `setKeys` on-chain and wait for finalization** — not just inclusion. Query the session index before and after; confirm the new keys are reflected on-chain for your stash account.
 
-3. **Submit `setKeys` extrinsic** to register the new keys on-chain. Wait for the transaction to be finalized (included in a finalized block, not just pending).
+5. **Wait for the session boundary.** New keys take effect at the start of the next epoch, not immediately. Keep the old key active in KMS/Vault until the transition is confirmed on-chain, then revoke it. If the rotation fails at any point before session transition, the old key is still valid and the node continues without downtime — safe rollback is automatic as long as the old key hasn't been prematurely revoked.
 
-4. **Confirm on-chain registration** — query the session keys associated with your stash account before proceeding.
+6. **Verify post-rotation health.** Confirm the validator is producing blocks, check for missed slots or equivocation events, and (for external signers) monitor signer latency.
 
-5. **Keep the old key material active until the session boundary.** In Substrate-based chains, `setKeys` does not take effect immediately — the new keys become active at the start of the *next session* (epoch). The old key must remain valid in KMS / Vault and must continue signing until the chain has transitioned to the new session. Revoking it prematurely will cause missed blocks during the transition window.
+> **Node migration:** Key rotation and host migration must be treated as independent operations. Rotate on the old node first, confirm on-chain, then bring up the new host with the already-registered keys. Running two nodes simultaneously with the same active key is a slashing condition.
 
-   Monitor the current session index on-chain to determine when the transition has occurred, then revoke the old key and archive its public key for audit purposes.
-
-> **Node migration:** If you are also replacing the node host (e.g. migrating to new hardware), rotate the keys first on the old node, confirm on-chain registration, then bring up the new node using the already-registered keys. Never generate a fresh key pair on the new host as part of a migration — treat key rotation and node replacement as two independent procedures.
-
-### Risks and mitigations
-
-| Risk | Mitigation |
-|---|---|
-| Key generated on the node — recoverable via memory forensics, swap, or shell history | Generate inside KMS or a hardened ephemeral environment; never run `key generate` on the production node |
-| New keys registered but old node stopped before finalization | Wait for explicit on-chain confirmation before stopping old node |
-| Rotation during high network load delays finalization | Schedule rotation during low-activity periods |
-| Old key revoked before session boundary — missed blocks during transition | Keep old key active in KMS until on-chain session transition is confirmed |
-| Conflating key rotation with node migration — new keys generated on the new host | Rotate keys first on the running node; treat migration as a separate step |
+This procedure delivers zero-downtime rotation while preventing equivocation and maintaining strict key isolation throughout.
 
 ---
 
