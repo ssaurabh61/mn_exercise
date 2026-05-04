@@ -14,7 +14,7 @@ All heavy data (chain DB, ledger state, postgres data) lives on `/mnt/d` to avoi
 | `NETWORK` | `preprod` | Target Cardano network; drives paths and URLs throughout |
 | `CARDANO_VERSION` | `10.6.2` | Pin this — must match db-sync |
 | `DB_SYNC_VERSION` | `13.6.0.7` | Must match schema dir in tarball |
-| `MIDNIGHT_RELEASE` | `node-0.22.5` | Check latest at [midnight-node releases](https://github.com/midnightntwrk/midnight-node/releases) |
+| `MIDNIGHT_RELEASE` | `node-0.22.2` | Pin to this — matches the official FNO Preprod Notion docs. See G11 on why using the latest (0.22.5) is not recommended. |
 
 ---
 
@@ -397,11 +397,11 @@ Do not proceed to Phase 8 until `sync_percent` reaches ~100.
 ## Phase 8 — Install Midnight Node & Generate Validator Keys
 
 ```bash
-# Download and install (check latest tag at github.com/midnightntwrk/midnight-node/releases)
-MIDNIGHT_RELEASE="node-0.22.5"
+# Download and install — use 0.22.2 per official FNO docs (see G11 before upgrading)
+MIDNIGHT_RELEASE="node-0.22.2"
 cd ~/tmp
-curl -L -O "https://github.com/midnightntwrk/midnight-node/releases/download/${MIDNIGHT_RELEASE}/midnight-node-0.22.5-linux-amd64.tar.gz"
-tar -xvzf midnight-node-0.22.5-linux-amd64.tar.gz
+curl -L -O "https://github.com/midnightntwrk/midnight-node/releases/download/${MIDNIGHT_RELEASE}/midnight-node-0.22.2-linux-amd64.tar.gz"
+tar -xvzf midnight-node-0.22.2-linux-amd64.tar.gz
 
 mv ~/tmp/midnight-node ~/.local/bin/
 mv ~/tmp/res ~/res
@@ -606,13 +606,15 @@ chmod -R u+w ~/cardano-data/schema
 
 ---
 
-### G11 — Midnight FNO docs reference an outdated `midnight-node` version (Phase 8)
+### G11 — Tried `node-0.22.5` (latest) instead of `node-0.22.2` (docs) — both hit the same bootstrap issue (Phase 8)
 
-**What happened:** The official Midnight FNO Preprod onboarding docs hardcode the install command with `node-0.22.2`. As of 2026-04-27, the latest stable release on GitHub is `node-0.22.5`. Using the docs verbatim installs an outdated binary.
+**What happened:** The official Midnight FNO Preprod Notion docs pin the install to `node-0.22.2`. GitHub shows `node-0.22.5` as the latest `0.x.x` stable release. We initially installed `0.22.5` to pick up any fixes in the newer release.
 
-**Fix:** Always check the [midnight-node releases page](https://github.com/midnightntwrk/midnight-node/releases) before running Phase 8. Use the version tagged **Latest** (not a pre-release RC). Update `MIDNIGHT_RELEASE` accordingly before running the download command.
+**Result:** Both `0.22.2` and `0.22.5` produce the identical bootstrap error (see G17 — `Main chain state ... not found`). The error is the same block hash, same error message, same behaviour on both versions. This confirms the issue is **not version-specific** — it is a fundamental bootstrap sequencing requirement affecting all fresh nodes against the current live preprod network.
 
-> Note: The `1.x.x` releases are all pre-release RCs (`node-1.0.0-toolkit-1.0.0-rc.x`). Do **not** use these for FNO preprod — use the highest `0.x.x` stable release.
+**Fix:** Use `node-0.22.2` as specified in the official docs. Do not chase the latest release expecting it to fix the bootstrap issue — it won't. The fix requires a chain snapshot from Midnight Foundation (see G17).
+
+> Note: The `1.x.x` releases are all pre-release RCs (`node-1.0.0-toolkit-1.0.0-rc.x`). Do **not** use these for FNO preprod — use `0.22.2` as documented.
 
 ---
 
