@@ -2,6 +2,12 @@ services:
   prometheus:
     image: prom/prometheus:v2.52.0
     container_name: fno-prometheus
+    # host.docker.internal resolves correctly on Docker Desktop (macOS/Windows).
+    # On a native Linux host it does NOT resolve by default — add:
+    #   extra_hosts:
+    #     - "host.docker.internal:host-gateway"
+    # to this service definition, or replace host.docker.internal with the
+    # host's actual IP in prometheus.yml.
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro

@@ -81,6 +81,21 @@ def load_services(path: Path) -> dict:
         print(f"[error] {path} must be a non-empty JSON object", file=sys.stderr)
         sys.exit(2)
 
+    # Validate URLs upfront so a tampered or misconfigured services.json fails
+    # loudly at startup rather than producing silent scrape errors at runtime.
+    from urllib.parse import urlparse
+    for svc_name, cfg in data.items():
+        url = cfg.get("url", "") if isinstance(cfg, dict) else ""
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https"):
+                raise ValueError(f"scheme must be http or https, got '{parsed.scheme}'")
+            if not parsed.netloc:
+                raise ValueError("missing host")
+        except ValueError as exc:
+            print(f"[error] invalid URL for service '{svc_name}' in {path}: {exc}", file=sys.stderr)
+            sys.exit(2)
+
     return data
 
 
@@ -122,7 +137,11 @@ def parse_prometheus_metrics(text: str) -> dict[str, float]:
 
         # Separate the name+labels part from "value [optional_timestamp]"
         if "{" in line:
-            brace_end = line.index("}")
+            try:
+                brace_end = line.index("}")
+            except ValueError:
+                # Malformed line: opening brace with no closing brace — skip it
+                continue
             full_key  = line[:brace_end + 1]      # e.g. metric{label="v"}
             bare_name = line[:line.index("{")]     # e.g. metric
             rest      = line[brace_end + 1:].strip()
@@ -155,9 +174,15 @@ def parse_prometheus_metrics(text: str) -> dict[str, float]:
 
 def _scrape_prometheus(url: str, timeout: int) -> tuple[bool, dict[str, float], str]:
     """Fetch a Prometheus /metrics URL and parse the text format."""
+    # 10 MB cap — prevents a misconfigured or malicious endpoint from
+    # exhausting memory. Typical Prometheus /metrics responses are < 100 KB.
+    MAX_RESPONSE_BYTES = 10 * 1024 * 1024
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
+            raw = resp.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            return False, {}, f"response too large (> {MAX_RESPONSE_BYTES // (1024*1024)} MB)"
+        body = raw.decode("utf-8", errors="replace")
         return True, parse_prometheus_metrics(body), ""
     except urllib.error.URLError as exc:
         return False, {}, f"network error: {exc.reason}"

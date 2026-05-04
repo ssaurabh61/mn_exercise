@@ -12,6 +12,9 @@ rule_files:
 
 scrape_configs:
   # System metrics (CPU, memory, disk)
+  # Note: host.docker.internal resolves on Docker Desktop (macOS/Windows) but
+  # not on native Linux. Add extra_hosts in docker-compose.yml if deploying
+  # on a Linux server.
   - job_name: node-exporter
     static_configs:
       - targets: ["host.docker.internal:9100"]

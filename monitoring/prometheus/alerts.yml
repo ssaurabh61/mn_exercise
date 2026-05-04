@@ -8,8 +8,12 @@ groups:
       # Primary health signal. A stalled chain means the node isn't following
       # consensus regardless of everything else looking fine.
       # 5m window + 5m for: max detection latency ~10 minutes — appropriate for prod.
+      # Note: cardano_node_metrics_blockNum_int is a gauge (block number), not a
+      # counter, so changes() is correct here. increase() is for counters only —
+      # on a gauge it applies counter-reset correction and can return non-zero even
+      # when the value hasn't moved.
       - alert: CardanoChainStall
-        expr: increase(cardano_node_metrics_blockNum_int[5m]) < 1
+        expr: changes(cardano_node_metrics_blockNum_int[5m]) == 0
         for: 5m
         labels:
           severity: critical
@@ -37,10 +41,12 @@ groups:
 
       # Midnight chain stall: Substrate best block not advancing for 5 minutes.
       # Mirrors the Cardano alert but for the FNO's own chain.
-      # Metric name: verify against actual midnight-node :9615/metrics output —
-      # standard Substrate nodes expose substrate_block_height{status="best"}.
+      # Metric name assumption: substrate_block_height is the standard Substrate
+      # gauge metric. Could not be verified against a live midnight-node instance
+      # since the node did not advance past best:#0 during setup (pre-whitelisting).
+      # substrate_block_height is a gauge — changes() is the correct function.
       - alert: MidnightChainStall
-        expr: increase(substrate_block_height{status="best",job="midnight-node"}[5m]) < 1
+        expr: changes(substrate_block_height{status="best",job="midnight-node"}[5m]) == 0
         for: 5m
         labels:
           severity: critical
@@ -48,7 +54,7 @@ groups:
           summary: "Midnight node best block has not advanced in 5 minutes"
           description: >
             Midnight best block height static for 5+ minutes.
-            Response: check peer count, journalctl for midnight-node, check bootstrap status (G14).
+            Response: check peer count, journalctl for midnight-node, check bootstrap status (Issue 14).
 
       # Midnight finality lag: best block is more than 10 blocks ahead of finalized.
       # While best advances, if finalized lags it indicates consensus problems.
@@ -76,7 +82,7 @@ groups:
           description: >
             Midnight peer count is {{ $value }}.
             If PeerID was recently rotated, give it a few minutes to reconnect.
-            Response: check port 30333, consider rotating PeerID if banned (see G13 in runbook).
+            Response: check port 30333, consider rotating PeerID if banned (see Issue 13 in runbook).
 
       # ── All services ─────────────────────────────────────────────────────────────
 
