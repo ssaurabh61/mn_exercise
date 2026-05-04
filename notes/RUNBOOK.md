@@ -458,33 +458,43 @@ cat "$OUTPUT_FILE"
 
 ### Start the Midnight node
 
+Create a `.env` file to hold all required environment variables:
+
 ```bash
-# DB_SYNC_POSTGRES_CONNECTION_STRING must be a URL, not key=value format (see G15)
-export DB_SYNC_POSTGRES_CONNECTION_STRING="postgresql://midnight:midnight@127.0.0.1:5432/cexplorer"
-# Cardano chain parameters — values come from ~/res/preprod/pc-chain-config.json
-export CARDANO_SECURITY_PARAMETER=2160
-export CARDANO_ACTIVE_SLOTS_COEFF=0.05
+cat > ~/.env << 'EOF'
+# DB connection — must be a URL, not key=value format (see G15)
+DB_SYNC_POSTGRES_CONNECTION_STRING=postgresql://midnight:midnight@localhost:5432/cexplorer
 
-# Bootnodes from ~/res/preprod/bootnodes-config.json — required for peer discovery (see G16)
-BOOTNODE_1="/dns/bootnode-1.preprod.midnight.network/tcp/30333/ws/p2p/12D3KooWQxxUgq7ndPfAaCFNbAxtcKYxrAzTxDfRGNktF75SxdX5"
-BOOTNODE_2="/dns/bootnode-2.preprod.midnight.network/tcp/30333/ws/p2p/12D3KooWNrUBs22FfmgjqFMa9ZqKED2jnxwsXWw5E4q2XVwN35TJ"
+# Cardano preprod parameters (see G18 — do NOT use mainnet values here)
+CARDANO_SECURITY_PARAMETER=432
+BLOCK_STABILITY_MARGIN=30
 
+# Node identity
+CFG_PRESET=preprod
+NODE_NAME=my-preprod-fno
+EOF
+
+source ~/.env
+```
+
+Then start the node:
+
+```bash
 midnight-node \
   --chain ~/res/preprod/chain-spec-raw.json \
   --base-path ~/data \
   --validator \
-  --database paritydb \
-  --port 30333 \
-  --rpc-port 9944 \
-  --prometheus-port 9615 \
-  --bootnodes "$BOOTNODE_1" \
-  --bootnodes "$BOOTNODE_2" \
+  --pool-limit 35 \
+  --name "${NODE_NAME}" \
+  --rpc-port 9933 \
   2>&1 | tee ~/midnight-node.log
 ```
 
 > **First run:** The node creates several PostgreSQL indexes on the cexplorer DB (`idx_multi_asset_policy_name_hex`, `idx_ma_tx_out_ident`, `idx_tx_out_address`, `idx_ma_tx_out_tx_out_id_ident`). This takes 5–10 minutes total and logs slow statement warnings — this is expected. The node begins syncing Midnight blocks after the indexes are built.
 >
 > **"unknown parent" errors during initial sync** are normal — the node receives blocks out of order briefly before it has the parent chain. They stop once sequential sync begins.
+>
+> **Bootnodes** are embedded in the preprod chain spec — no `--bootnodes` flag needed. Preprod does not use WireGuard overlay (`--reserved-only` / `--reserved-nodes` not required).
 
 ---
 
@@ -683,11 +693,30 @@ Bootnode addresses are in `~/res/preprod/bootnodes-config.json`.
 
 **Root cause:** The Midnight preprod network has undergone runtime upgrades since v0.22.2 was released. The current live runtime WASM (at block ~630,000+) contains a committee selection pallet that panics when asked to verify block inherents without existing chain state (i.e., from genesis). This is a chicken-and-egg problem: block announcement verification triggers the panic before any chain state exists.
 
-**This is an upstream issue** — it cannot be resolved by changing binary version, `--sync` mode (`full`, `warp`), or env vars. It requires either:
-- A chain database snapshot from Midnight Foundation
-- A node runtime fix from Midnight engineering
+**This is a bootstrap issue** — it cannot be resolved by changing binary version, `--sync` mode, env vars, or flags. Root cause:
 
-**Evidence captured:** Node connects to preprod bootnodes (1–3 peers), downloads chain data (60–150 kiB/s), all keys generated and keystore populated, `partner-chains-public-keys.json` produced. The node infrastructure is correctly configured; the block import blocker is a network-level runtime compatibility issue.
+midnight-node maintains its own internal cache of processed Cardano state as it imports Midnight blocks. Since a fresh node has never imported any Midnight blocks (`best: #0`), its Cardano state cache is empty. When peers announce their tip block, midnight-node tries to verify it by looking up a referenced Cardano block hash in its own internal cache — not in db-sync — and finds nothing. Every peer gets disconnected, preventing block import.
+
+**Verified:** The referenced Cardano block (`aee88622...`, block 4,526,090) IS present in db-sync. The problem is midnight-node's own internal state, not db-sync.
+
+**Fix:** A chain database snapshot from Midnight Foundation. In production FNO onboarding, Midnight Foundation provides a snapshot after `partner-chains-public-keys.json` is submitted and keys are whitelisted. The snapshot provides a pre-built midnight-node paritydb from a recent block, skipping the bootstrap gap entirely.
+
+**Evidence captured:** Node connects to preprod network (up to 7 peers with fresh PeerID), downloads chain data at 50–150 kiB/s, db-sync queried successfully (slow SQL queries returning real committee data), all keys generated and keystore populated, `partner-chains-public-keys.json` produced. All infrastructure is correctly configured; the block import blocker is a bootstrap sequencing requirement in the FNO onboarding process.
+
+---
+
+### G18 — Wrong `CARDANO_SECURITY_PARAMETER` (mainnet value used instead of preprod) (Phase 8)
+
+**What happened:** Used `CARDANO_SECURITY_PARAMETER=2160` (the value from `pc-chain-config.json` under `cardano.security_parameter`). This is the **Cardano mainnet** value. Preprod uses **432**. With the wrong value the node could not resolve a "stable" Cardano block at the current slot, causing repeated `Stable block not found` errors and peers dropping constantly.
+
+**Fix:** Always use preprod-specific values in `.env`:
+```bash
+CARDANO_SECURITY_PARAMETER=432
+BLOCK_STABILITY_MARGIN=30
+CFG_PRESET=preprod
+```
+
+The value in `pc-chain-config.json` (`2160`) reflects mainnet Cardano parameters embedded in the chain spec — do not use it as the env var for preprod node operation.
 
 ---
 
