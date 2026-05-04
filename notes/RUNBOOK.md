@@ -405,6 +405,8 @@ tar -xvzf midnight-node-0.22.5-linux-amd64.tar.gz
 
 mv ~/tmp/midnight-node ~/.local/bin/
 mv ~/tmp/res ~/res
+# The tarball nests contents under an extra res/ — flatten it (see G13)
+mv ~/res/res/* ~/res/ && rmdir ~/res/res
 chmod +x ~/.local/bin/midnight-node
 source ~/.bashrc
 midnight-node --version
@@ -420,18 +422,23 @@ chmod 600 aura.json grandpa.json cross_chain.json
 NETWORK="preprod"
 NETWORK_DIR="$HOME/data/chains/midnight_${NETWORK}/network"
 mkdir -p "$NETWORK_DIR" && chmod 700 "$NETWORK_DIR"
-midnight-node key generate-node-key --file "$NETWORK_DIR/secret_ed25519"
+# --chain is required; without it the command errors (see G14)
+midnight-node key generate-node-key --file "$NETWORK_DIR/secret_ed25519" --chain ~/res/preprod/chain-spec-raw.json
 midnight-node key inspect-node-key --file "$NETWORK_DIR/secret_ed25519"   # prints PeerID
 
 # Insert keys into the keystore
 KEYSTORE_PATH="$HOME/data/chains/midnight_preprod/keystore"
 mkdir -p "$KEYSTORE_PATH"
 
+# --chain is required for all key insert calls too (see G14)
 midnight-node key insert --keystore-path "$KEYSTORE_PATH" --scheme sr25519 --key-type aura \
+  --chain ~/res/preprod/chain-spec-raw.json \
   --suri "$(jq -r .secretPhrase aura.json)"
 midnight-node key insert --keystore-path "$KEYSTORE_PATH" --scheme ed25519 --key-type gran \
+  --chain ~/res/preprod/chain-spec-raw.json \
   --suri "$(jq -r .secretPhrase grandpa.json)"
 midnight-node key insert --keystore-path "$KEYSTORE_PATH" --scheme ecdsa  --key-type beef \
+  --chain ~/res/preprod/chain-spec-raw.json \
   --suri "$(jq -r .secretPhrase cross_chain.json)"
 
 # Build validator registration JSON (send this to Midnight Foundation)
@@ -448,6 +455,36 @@ cat <<EOF > "$OUTPUT_FILE"
 EOF
 cat "$OUTPUT_FILE"
 ```
+
+### Start the Midnight node
+
+```bash
+# DB_SYNC_POSTGRES_CONNECTION_STRING must be a URL, not key=value format (see G15)
+export DB_SYNC_POSTGRES_CONNECTION_STRING="postgresql://midnight:midnight@127.0.0.1:5432/cexplorer"
+# Cardano chain parameters — values come from ~/res/preprod/pc-chain-config.json
+export CARDANO_SECURITY_PARAMETER=2160
+export CARDANO_ACTIVE_SLOTS_COEFF=0.05
+
+# Bootnodes from ~/res/preprod/bootnodes-config.json — required for peer discovery (see G16)
+BOOTNODE_1="/dns/bootnode-1.preprod.midnight.network/tcp/30333/ws/p2p/12D3KooWQxxUgq7ndPfAaCFNbAxtcKYxrAzTxDfRGNktF75SxdX5"
+BOOTNODE_2="/dns/bootnode-2.preprod.midnight.network/tcp/30333/ws/p2p/12D3KooWNrUBs22FfmgjqFMa9ZqKED2jnxwsXWw5E4q2XVwN35TJ"
+
+midnight-node \
+  --chain ~/res/preprod/chain-spec-raw.json \
+  --base-path ~/data \
+  --validator \
+  --database paritydb \
+  --port 30333 \
+  --rpc-port 9944 \
+  --prometheus-port 9615 \
+  --bootnodes "$BOOTNODE_1" \
+  --bootnodes "$BOOTNODE_2" \
+  2>&1 | tee ~/midnight-node.log
+```
+
+> **First run:** The node creates several PostgreSQL indexes on the cexplorer DB (`idx_multi_asset_policy_name_hex`, `idx_ma_tx_out_ident`, `idx_tx_out_address`, `idx_ma_tx_out_tx_out_id_ident`). This takes 5–10 minutes total and logs slow statement warnings — this is expected. The node begins syncing Midnight blocks after the indexes are built.
+>
+> **"unknown parent" errors during initial sync** are normal — the node receives blocks out of order briefly before it has the parent chain. They stop once sequential sync begins.
 
 ---
 
@@ -583,6 +620,76 @@ chmod -R u+w ~/cardano-data/schema
 
 ---
 
+### G13 — `midnight-node key generate` panics: `failed reading default.toml` (Phase 8)
+
+**What happened:** All three `midnight-node key generate` commands immediately panicked with `failed reading default.toml at path /home/knight/res/cfg/default.toml: No such file or directory`. The binary looks for its config at `~/res/cfg/default.toml` relative to the working directory.
+
+**Root cause:** The tarball extracts into a double-nested structure — `res/res/` instead of `res/`. After `mv ~/tmp/res ~/res`, the actual contents land at `~/res/res/cfg/` rather than `~/res/cfg/`.
+
+**Fix:** Flatten the directory after moving it:
+```bash
+mv ~/res/res/* ~/res/
+rmdir ~/res/res
+```
+
+---
+
+### G14 — `midnight-node key generate-node-key` requires `--chain` flag (Phase 8)
+
+**What happened:** Running `midnight-node key generate-node-key` or `midnight-node key insert` without a chain spec produced: `Input("chainspec_genesis_block not configured")` and a `NotFound` IO error.
+
+**Fix:** Pass the preprod chain spec explicitly to every `midnight-node key` subcommand:
+```bash
+midnight-node key generate-node-key \
+  --file "$NETWORK_DIR/secret_ed25519" \
+  --chain ~/res/preprod/chain-spec-raw.json
+
+midnight-node key insert ... \
+  --chain ~/res/preprod/chain-spec-raw.json \
+  --suri "..."
+```
+
+---
+
+### G15 — `DB_SYNC_POSTGRES_CONNECTION_STRING` must be a URL, not key=value format (Phase 8)
+
+**What happened:** Setting the env var as `"host=127.0.0.1 port=5432 dbname=cexplorer user=midnight password=midnight"` (libpq key=value format) caused the node to error: `Failed to create db-sync main chain follower: error with configuration: relative URL without a base`.
+
+**Fix:** Use a PostgreSQL connection URL:
+```bash
+export DB_SYNC_POSTGRES_CONNECTION_STRING="postgresql://midnight:midnight@127.0.0.1:5432/cexplorer"
+```
+
+---
+
+### G16 — Node stuck at `best: #0` with 0 peers without explicit `--bootnodes` flags (Phase 8)
+
+**What happened:** Starting midnight-node without `--bootnodes` resulted in `0 peers` indefinitely and the node never advanced from `best: #0`. The `BOOTNODES` env var format (comma-separated) was not reliably parsed.
+
+**Fix:** Pass bootnodes explicitly as repeated CLI flags — one `--bootnodes` per address:
+```bash
+midnight-node \
+  --bootnodes "/dns/bootnode-1.preprod.midnight.network/tcp/30333/ws/p2p/12D3KooWQxxUgq7ndPfAaCFNbAxtcKYxrAzTxDfRGNktF75SxdX5" \
+  --bootnodes "/dns/bootnode-2.preprod.midnight.network/tcp/30333/ws/p2p/12D3KooWNrUBs22FfmgjqFMa9ZqKED2jnxwsXWw5E4q2XVwN35TJ" \
+  ...
+```
+Bootnode addresses are in `~/res/preprod/bootnodes-config.json`.
+
+---
+
+### G17 — Block import stalled at `best: #0` due to preprod runtime upgrade (Phase 8)
+
+**What happened:** After connecting to peers, the node repeatedly panics with `Validator inherent data must be provided` when verifying block announcements from peers. The same block hash (`0xd64fcd69...`) is rejected from every peer. This occurs with both v0.22.2 and v0.22.5 of the binary.
+
+**Root cause:** The Midnight preprod network has undergone runtime upgrades since v0.22.2 was released. The current live runtime WASM (at block ~630,000+) contains a committee selection pallet that panics when asked to verify block inherents without existing chain state (i.e., from genesis). This is a chicken-and-egg problem: block announcement verification triggers the panic before any chain state exists.
+
+**This is an upstream issue** — it cannot be resolved by changing binary version, `--sync` mode (`full`, `warp`), or env vars. It requires either:
+- A chain database snapshot from Midnight Foundation
+- A node runtime fix from Midnight engineering
+
+**Evidence captured:** Node connects to preprod bootnodes (1–3 peers), downloads chain data (60–150 kiB/s), all keys generated and keystore populated, `partner-chains-public-keys.json` produced. The node infrastructure is correctly configured; the block import blocker is a network-level runtime compatibility issue.
+
+---
 
 ## Cleanup (Reset to Clean State)
 

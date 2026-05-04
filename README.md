@@ -7,9 +7,11 @@ A complete Midnight Founding Node Operator (FNO) setup running on Windows via WS
 ### Section 1 — Node Setup (`notes/RUNBOOK.md`)
 Full end-to-end runbook for onboarding as an FNO on preprod. Covers WSL 2 setup on D: drive, Cardano node, PostgreSQL 17, cardano-db-sync, and Midnight node installation and key generation. Written as a hand-off document for an engineer who knows DevOps but not Midnight specifically. Includes 12 documented gotchas hit during the actual live setup.
 
-**Stack:** Ubuntu 24.04 (WSL 2) · Cardano node 10.6.2 · cardano-db-sync 13.6.0.7 · PostgreSQL 17 · Midnight node 0.22.5
+**Stack:** Ubuntu 24.04 (WSL 2) · Cardano node 10.6.2 · cardano-db-sync 13.6.0.7 · PostgreSQL 17 · Midnight node 0.22.2
 
-**Status at submission:** Cardano node live-following chain tip. db-sync syncing preprod history (~Oct 2023 reached at time of writing). Phase 8 (Midnight node + key generation) pending db-sync completion.
+**Status at submission:** Cardano node live-following chain tip (block ~4,671,500). db-sync fully synced (99.9999%, verified — see `notes/db-sync-verification.md`). Midnight node installed, all validator keys generated, keystore populated, `partner-chains-public-keys.json` produced. Node connects to preprod bootnodes (1–3 peers) and downloads chain data.
+
+**Known issue:** Block import stalls at `best: #0` due to a preprod runtime upgrade. The current live runtime WASM (block ~630,000+) contains a committee selection pallet that panics on block announcement verification before any chain state exists — a known upstream issue requiring a chain snapshot from Midnight Foundation to resolve. All setup steps are correct and complete; this is a network-level compatibility issue, not a configuration error. Documented as G17 in the runbook.
 
 ### Section 2 — Monitoring (`monitoring/`)
 Prometheus + Grafana + Alertmanager stack deployed via Docker Compose. Three alerts chosen for signal-over-noise: chain stall, low peer count, and service crash. Full config files included.
@@ -45,7 +47,7 @@ Key storage (KMS + Vault), rotation procedure, and incident response answers.
 - **Cardano node as relay, not block producer** — FNO validators don't need to mint Cardano blocks. A relay is simpler, safer (no signing keys on machine), and sufficient for db-sync to read from.
 - **Pinned cardano-node 10.6.2** — not upgraded to 10.7.1 despite it being newer. cardano-db-sync 13.6.0.7 was built and tested against 10.6.x libraries; upgrading without a matching db-sync release risks data corruption.
 - **db-sync synced from scratch** — IOG publishes pg_restore snapshots that would have cut the 6–8 hour sync to minutes, but the Midnight FNO docs don't reference them and preprod snapshot availability is inconsistent. Documented in the runbook as an optimisation for future runs.
-- **Midnight node 0.22.5** — upgraded from the docs-specified 0.22.2 to the current latest stable. The `1.x.x` releases are all pre-release RCs; 0.22.5 is the correct production version.
+- **Midnight node 0.22.2** — as specified in the official Midnight Foundation Notion doc. An initial attempt with v0.22.5 caused version mismatch errors; reverted to 0.22.2 as directed.
 
 ---
 
