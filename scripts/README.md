@@ -1,12 +1,109 @@
 # Scripts — Midnight FNO Preprod
 
+Both Option A and Option C from the assessment were implemented.
+
+| Script | Option | Location |
+|---|---|---|
+| `fno_key_collection.py` | A — Key collection | `scripts/key_collection/` |
+| `node_health_check.py` | C — Node health checker | `scripts/node_health/` |
+
+---
+
+## Script: `fno_key_collection.py`
+
+### What it does
+
+1. **Reads** a list of FNO operators from `operators.json` (id, name, key endpoint)
+2. **Requests** each operator's public key via HTTP GET to their configured endpoint — expects a JSON response with a `public_key` field
+3. **Persists state** to `reports/key_collection_state.json` so re-runs skip operators who already responded (idempotent by design)
+4. **Writes** a timestamped JSON + CSV report to the output directory
+5. **Prints** a summary of who responded and who didn't, with error details for pending operators
+6. **Exits non-zero** if any operators are still pending — makes it CI/cron friendly
+
+Mock key endpoints are provided in `key_collection/mock_keys/` (served as static JSON files) for local testing without live operator infrastructure.
+
+### Output format
+
+```json
+{
+  "generated_at": "2026-05-02T14:32:00Z",
+  "total": 3,
+  "collected": 2,
+  "pending": 1,
+  "results": [
+    {
+      "id": "fno-alpha",
+      "name": "Alpha Operator",
+      "public_key": "0xabc123...",
+      "collected_at": "2026-05-02T14:32:00Z",
+      "status": "collected"
+    },
+    {
+      "id": "fno-bravo",
+      "name": "Bravo Operator",
+      "public_key": "",
+      "error": "HTTP 503",
+      "collected_at": "2026-05-02T14:32:01Z",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+A matching CSV is written alongside the JSON for easy import into spreadsheets or other tooling.
+
+### Usage
+
+```bash
+# Basic run — reads operators.json, writes reports/ directory
+python3 scripts/key_collection/fno_key_collection.py
+
+# Preview what would run without making any HTTP requests
+python3 scripts/key_collection/fno_key_collection.py --dry-run
+
+# Re-request keys from all operators, including those already collected
+python3 scripts/key_collection/fno_key_collection.py --retry
+
+# Re-request a single operator only (useful after one failure)
+python3 scripts/key_collection/fno_key_collection.py --operator fno-delta --retry
+
+# Target multiple specific operators
+python3 scripts/key_collection/fno_key_collection.py --operator fno-delta --operator fno-echo
+
+# Custom output directory and slower network timeout
+python3 scripts/key_collection/fno_key_collection.py \
+    --output-dir /var/log/fno-keys \
+    --timeout 30
+```
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | All operators responded |
+| `1` | One or more operators still pending |
+| `2` | Fatal error (missing file, bad config, invalid URL) |
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--operators FILE` | `key_collection/operators.json` | Operator list |
+| `--state FILE` | `reports/key_collection_state.json` | Persistent state file |
+| `--output-dir DIR` | `reports/` | Where to write JSON + CSV reports |
+| `--timeout SECS` | `10` | HTTP request timeout per operator |
+| `--retry` | off | Re-request even already-collected keys |
+| `--operator ID` | all | Only collect from this ID (repeatable) |
+| `--dry-run` | off | Preview without making any HTTP requests |
+
+---
+
 ## Section 3 Choice: Option C — Node Health Checker
 
-**Why Option C over A and B:**
+**Why Option C over B:**
 
 | Option | What it does | Why not chosen |
 |---|---|---|
-| A — Key collection | Sends requests to FNO operators for public keys | Requires mocking an external coordination layer; the interesting part is simulated, not real |
 | B — Maintenance notification | Generates maintenance window notifications | More useful as a process/template than a script; the ack tracking is largely mock logic |
 | C — Node health checker | Polls live metrics endpoints, writes structured report, diffs regressions | **Works against the actual running node.** All signals are real, not mocked. Practical operational utility — you'd run this in cron or alongside Grafana. |
 

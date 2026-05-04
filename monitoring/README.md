@@ -1,162 +1,174 @@
-# Monitoring & Alerting — Midnight FNO Preprod Node
+# Monitoring — Midnight FNO Preprod
 
-## Stack Choice
+Prometheus + Grafana + Alertmanager, deployed via Docker Compose.
 
-**Prometheus + Grafana + Alertmanager**, deployed via Docker Compose.
+Cardano node and Midnight node both expose native Prometheus endpoints so no custom exporters are needed for the core blockchain signals. Grafana gives you a health overview without SSH-ing in on every check. Alertmanager handles deduplication and routing so you don't get flooded during a restart.
 
-Rationale:
-- Industry standard for blockchain node monitoring — Cardano node and Midnight node both expose native Prometheus endpoints, so no custom exporters are needed for the core signals
-- Grafana gives visual confirmation of chain health without SSH access
-- Alertmanager handles deduplication, grouping, and routing — avoids alert storms during restarts
-
-Alternative considered: **Datadog** — excellent for multi-service environments with existing agents, but adds cost and an external dependency. For a self-hosted preprod validator, a local stack is more appropriate and easier to audit.
+Looked at Datadog briefly — good if you're already running agents across a fleet, but adds cost and an external dependency. A self-hosted stack is simpler to audit for a single-node preprod setup.
 
 ---
 
-## Components Monitored
+## What's being scraped
 
-| Service | Metrics endpoint | What it exposes |
+| Service | Endpoint | What it gives you |
 |---|---|---|
 | `cardano-node` | `:12798/metrics` | Block height, peer count, mempool, memory/GC |
 | `cardano-db-sync` | `:8080/metrics` | Sync progress, DB insert rate, lag behind tip |
 | `midnight-node` | `:9615/metrics` | Substrate block height, peer count, finality |
-| `node_exporter` | `:9100/metrics` | System CPU, memory, disk usage |
+| `node_exporter` | `:9100/metrics` | CPU, memory, disk |
 
-> **Note:** `cardano-node` Prometheus metrics must be enabled in `config.json` by setting `"hasPrometheus": ["127.0.0.1", 12798]`. This is already set in the preprod config from IOG.
+> Cardano Prometheus must be enabled in `config.json`: `"hasPrometheus": ["127.0.0.1", 12798]`. Already set in the preprod config from IOG.
 
 ---
 
-## Alert Design
+## Implemented alerts
 
-### Alert 1 — Chain Stall (`CardanoChainStall`)
+Six alerts across Cardano and Midnight. Three were originally required; the extra three cover Midnight-specific signals that matter just as much for an FNO.
+
+### `CardanoChainStall` · critical
 
 ```yaml
-alert: CardanoChainStall
-expr: increase(cardano_node_metrics_blockNum_int[10m]) == 0
-for: 10m
-labels:
-  severity: critical
-annotations:
-  summary: "Cardano node has not added a block in 10 minutes"
-  description: "Block height has been static for 10+ minutes. Node is not following the chain."
+expr: increase(cardano_node_metrics_blockNum_int[5m]) < 1
+for: 5m
 ```
 
-**Why:** Block progression is the single most critical health signal for a validator. A stalled node means it is neither observing the chain nor contributing to it. Any other metric being healthy while blocks are stalled is a false positive on node health.
+Block progression is the single most important signal. If blocks stopped advancing, nothing else being healthy matters. The 5-minute expression window combined with `for: 5m` gives a worst-case detection time of ~10 minutes — fast enough to matter in production without false-alerting on brief hiccups or planned restarts (which typically complete within 2-3 minutes).
 
-**Operational response:**
-1. Check peer count alert (below) — isolation is the most common cause
-2. `sudo journalctl -u cardano-node -n 100` — look for consensus errors
-3. If no obvious cause, restart: `sudo systemctl restart cardano-node`
+**Response:** check peer count (usually the cause) → journalctl → restart if no obvious reason.
 
 ---
 
-### Alert 2 — Low Peer Count (`CardanoLowPeerCount`)
+### `CardanoLowPeerCount` · warning
 
 ```yaml
-alert: CardanoLowPeerCount
 expr: cardano_node_metrics_connectedPeers_int < 3
 for: 5m
-labels:
-  severity: warning
-annotations:
-  summary: "Cardano node has fewer than 3 connected peers"
-  description: "Peer count is {{ $value }}. Node may be approaching network isolation."
 ```
 
-**Why:** Cardano uses Ouroboros which requires network consensus. With fewer than 3 peers the node can still follow the chain but is at risk of diverging if those peers are unreliable. This is a leading indicator — it fires before a chain stall occurs, giving time to act.
+Leading indicator — fires before a chain stall happens, giving a window to fix connectivity. Below 3 peers the node is technically still following the chain but fragile.
 
-**Operational response:**
-1. Check ISP/VPN connectivity
-2. Verify port 3001 is reachable: `curl -v telnet://$(hostname -I | awk '{print $1}'):3001`
-3. Review topology config and add more reliable relays if persistently low
+**Response:** check port 3001 → review topology config → add more reliable relays.
 
 ---
 
-### Alert 3 — Service Down (`ServiceDown`)
+### `ServiceDown` · critical
 
 ```yaml
-alert: ServiceDown
 expr: up{job=~"cardano-node|cardano-db-sync|midnight-node"} == 0
 for: 2m
-labels:
-  severity: critical
-annotations:
-  summary: "{{ $labels.job }} is not responding to Prometheus scrapes"
-  description: "Service {{ $labels.job }} has been unreachable for 2+ minutes — process likely crashed."
 ```
 
-**Why:** Prometheus `up == 0` is the most reliable crash signal — it fires regardless of *why* the process exited (OOM, segfault, config error, manual stop). Covering all three services with a single rule means no crash goes unnoticed. The 2-minute `for` window avoids false positives during planned restarts.
+Covers all three services with one rule. `up == 0` fires regardless of why the process exited — OOM, segfault, config error, or manual stop. 2-minute window avoids noise from planned restarts.
 
-**Operational response:**
-1. `sudo systemctl status <service>` — check exit code and last log lines
-2. `sudo journalctl -u <service> -n 50` — identify crash reason
-3. `sudo systemctl restart <service>` if transient; investigate before restarting if it was an OOM kill
+**Response:** systemctl status → journalctl → restart if transient. If OOM, investigate before restarting.
 
 ---
 
-## Alert Philosophy
+### `MidnightChainStall` · critical
 
-These three alerts cover the three independent failure modes a validator can experience:
+```yaml
+expr: increase(substrate_block_height{status="best",job="midnight-node"}[5m]) < 1
+for: 5m
+```
 
-| Failure mode | Alert | Is it actionable? |
+Same logic as CardanoChainStall but for the FNO's own chain. Stalled Midnight block height with Cardano healthy usually means a peer ban or bootstrap issue (see G13/G14 in the runbook).
+
+---
+
+### `MidnightFinalityLag` · warning
+
+```yaml
+expr: substrate_block_height{status="best"} - substrate_block_height{status="finalized"} > 10
+for: 5m
+```
+
+Best block advancing but finalized stalling = peers aren't reaching consensus. Catching this early prevents it from becoming a full stall.
+
+---
+
+### `MidnightLowPeerCount` · warning
+
+```yaml
+expr: substrate_sub_libp2p_peers_count{job="midnight-node"} < 2
+for: 5m
+```
+
+Fewer than 2 peers on midnight-node usually means the PeerID got soft-banned. If this fires after a restart, rotate the network key (see G13 in runbook).
+
+---
+
+## Alert routing
+
+Alertmanager currently routes everything to a no-op receiver — alerts are evaluated and deduplicated but not forwarded anywhere. That's fine for preprod where you're watching the dashboard. For production, route by severity:
+
+| Severity | Channel | Why |
 |---|---|---|
-| Node not following chain | CardanoChainStall | Yes — restart / check consensus |
-| Network isolation risk | CardanoLowPeerCount | Yes — fix connectivity / topology |
-| Process crash | ServiceDown | Yes — restart / fix config |
+| `critical` | PagerDuty | Chain stall or service crash needs a human now, any time of day |
+| `warning` | Slack `#fno-alerts` | Needs attention but can wait for business hours |
+| `info` | Grafana annotation only | Visible on the dashboard, no interrupt |
 
-Intentionally excluded (would be noisy/low-signal for preprod FNO):
-- **CPU/memory thresholds** — Cardano node GC spikes are expected; threshold tuning is environment-specific and generates false positives. OOM will surface via ServiceDown.
-- **DB sync lag** — lag is expected during initial sync and after restarts; alerting before 100% sync would be constant noise.
-- **Disk usage** — valid concern for production, deferred here since chain data volume is known and stable on preprod.
+The alertmanager config has commented-out Slack and PagerDuty receiver examples — swap in your webhook URLs and update the routes.
 
----
-
-## Directory Structure
-
-```
-monitoring/
-├── README.md                        ← this file
-├── docker-compose.yml               ← Prometheus + Grafana + Alertmanager stack
-├── prometheus/
-│   ├── prometheus.yml               ← scrape config
-│   └── alerts.yml                   ← alert rules (the three above)
-├── alertmanager/
-│   └── alertmanager.yml             ← routing (logs to stdout for preprod)
-└── grafana/
-    ├── provisioning/
-    │   ├── datasources/
-    │   │   └── prometheus.yml       ← auto-wire Prometheus datasource
-    │   └── dashboards/
-    │       └── dashboard.yml        ← auto-load dashboard on startup
-    └── dashboards/
-        └── midnight-fno.json        ← dashboard definition
-```
+`inhibit_rules` suppress the chain-stall alert when `ServiceDown` is already firing for the same service — they're the same incident, no need to page twice.
 
 ---
 
-## Running the Stack
+## What else to add in production
 
-Prerequisites: Docker Desktop running (WSL2 integration enabled).
+The alerts above cover "is it working right now." For a production FNO you'd also want:
+
+**Midnight — once whitelisted:**
+- **Missed block production** — if your node was scheduled to author a block in its slot and didn't, that's an SLA breach. Requires comparing on-chain block authors to your node's AURA key.
+- **Epoch transition** — alert when a new epoch starts so you can confirm your node is still in the validator set.
+
+**Infrastructure:**
+- **Disk space < 20% free** — especially on the D: partition where the chain DB lives. A full disk kills the node without warning.
+- **Memory > 90% for > 10 minutes** — Cardano + db-sync + PostgreSQL under catch-up load can push past 12 GB. Threshold left out of the current rules because it's host-specific; calibrate against a week of baseline data before setting it.
+- **CPU — intentionally not alerted on.** Cardano node has aggressive GC cycles that regularly spike CPU to 80-100% during block validation and chain catch-up. A fixed CPU threshold would page constantly for completely normal behaviour. If the node is struggling, it shows up in the chain stall alert first — that's the signal worth acting on.
+
+**db-sync:**
+- **Lag > 10 blocks behind Cardano tip** (post-initial-sync) — db-sync falling behind means midnight-node is querying stale chain data. Use `cardano_db_sync_node_blocks` vs `cardano_node_metrics_blockNum_int`.
+- **PostgreSQL unreachable** (`pg_up == 0`) — midnight-node silently degrades if postgres goes away; this catches it before it surfaces as a chain stall.
+
+**Latency / P95–P99:**
+- **RPC response time p95 > 500ms** — `substrate_rpc_calls_time_bucket` in midnight-node's metrics. High RPC latency is usually the first sign of memory pressure or a blocked thread, well before it causes a visible problem.
+- **DB query latency p99 > 2s** — via PostgreSQL `pg_stat_statements`. db-sync query patterns degrade as the DB grows; catching it early prevents cascade failures.
+- **Block validation time spikes** — Substrate exposes block processing time histograms. p99 spikes above baseline are an early warning of runtime issues before they become stalls.
+
+---
+
+## Running the stack
+
+Prerequisites: Docker Desktop with WSL2 integration enabled.
 
 ```bash
 cd monitoring
 docker compose up -d
 
-# Grafana:    http://localhost:3000  (admin / admin)
-# Prometheus: http://localhost:9090
+# Grafana:      http://localhost:3000  (admin / admin — change on first login)
+# Prometheus:   http://localhost:9090
 # Alertmanager: http://localhost:9093
 ```
 
-> **Note:** Prometheus scrapes `host.docker.internal` to reach services running in WSL. On Linux (non-WSL) replace with `172.17.0.1` or the host IP.
+> **WSL note:** Prometheus scrapes `host.docker.internal` to reach services running in WSL. On native Linux replace with `172.17.0.1` or the actual host IP.
 
 ---
 
-## TODO (Implementation)
+## Directory structure
 
-- [ ] Enable prometheus endpoint in cardano-node `config.json` (`hasPrometheus`)
-- [ ] Write `docker-compose.yml`
-- [ ] Write `prometheus/prometheus.yml` with scrape targets
-- [ ] Write `prometheus/alerts.yml` with the three rules above
-- [ ] Write `alertmanager/alertmanager.yml` (log-to-stdout for preprod)
-- [ ] Import/export Grafana dashboard JSON for cardano-node panel
-- [ ] Verify midnight-node exposes `:9615` (Substrate default) or adjust scrape target
+```
+monitoring/
+├── README.md
+├── docker-compose.yml               ← Prometheus + Grafana + Alertmanager + node-exporter
+├── prometheus/
+│   ├── prometheus.yml               ← scrape config (4 targets)
+│   └── alerts.yml                   ← 6 alert rules
+├── alertmanager/
+│   └── alertmanager.yml             ← routing + inhibit rules (no-op receiver for preprod)
+└── grafana/
+    ├── provisioning/
+    │   ├── datasources/prometheus.yml
+    │   └── dashboards/dashboard.yml
+    └── dashboards/midnight-fno.json
+```
+

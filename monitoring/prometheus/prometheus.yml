@@ -23,7 +23,9 @@ scrape_configs:
       - targets: ["host.docker.internal:12798"]
 
   # cardano-db-sync
+  # Note: db-sync serves metrics at / (root), not /metrics
   - job_name: cardano-db-sync
+    metrics_path: /
     static_configs:
       - targets: ["host.docker.internal:8080"]
 

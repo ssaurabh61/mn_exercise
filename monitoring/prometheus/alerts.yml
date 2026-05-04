@@ -2,24 +2,26 @@ groups:
   - name: fno_alerts
     rules:
 
-      # Alert 1: Chain stall — node has not added a block in 10 minutes
-      # This is the primary health signal for a validator. A stalled chain means
-      # the node is not following consensus regardless of other metrics being healthy.
+      # ── Cardano ──────────────────────────────────────────────────────────────────
+
+      # Chain stall: no new Cardano blocks in 5 minutes.
+      # Primary health signal. A stalled chain means the node isn't following
+      # consensus regardless of everything else looking fine.
+      # 5m window + 5m for: max detection latency ~10 minutes — appropriate for prod.
       - alert: CardanoChainStall
-        expr: increase(cardano_node_metrics_blockNum_int[10m]) == 0
-        for: 10m
+        expr: increase(cardano_node_metrics_blockNum_int[5m]) < 1
+        for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "Cardano node has not added a block in 10 minutes"
+          summary: "Cardano node has not added a block in 5 minutes"
           description: >
-            Block height has been static for 10+ minutes. Node is not following the chain.
+            Block height has been static for 5+ minutes. Node is not following the chain.
             Check peer count alert — isolation is the most common cause.
-            Response: check journalctl -u cardano-node, verify peer count, restart if no clear cause.
+            Response: journalctl -u cardano-node, verify peer count, restart if no clear cause.
 
-      # Alert 2: Low peer count — fewer than 3 connected peers for 5 minutes
-      # Leading indicator that fires before a chain stall occurs, giving time to act.
-      # With <3 peers the node is at risk of diverging from the main chain.
+      # Low peer count: fewer than 3 connected peers for 5 minutes.
+      # Leading indicator — fires before a chain stall, gives time to fix connectivity.
       - alert: CardanoLowPeerCount
         expr: cardano_node_metrics_connectedPeers_int < 3
         for: 5m
@@ -29,12 +31,58 @@ groups:
           summary: "Cardano node has fewer than 3 connected peers"
           description: >
             Peer count is {{ $value }}. Node is approaching network isolation.
-            Response: check connectivity on port 3001, verify topology config,
-            add more reliable relay peers if persistently low.
+            Response: check port 3001 connectivity, verify topology config.
 
-      # Alert 3: Service down — any FNO service not responding to Prometheus scrapes
-      # Catches any crash regardless of cause (OOM, segfault, config error, manual stop).
-      # The 2-minute for: window avoids false positives during planned restarts.
+      # ── Midnight node ────────────────────────────────────────────────────────────
+
+      # Midnight chain stall: Substrate best block not advancing for 5 minutes.
+      # Mirrors the Cardano alert but for the FNO's own chain.
+      # Metric name: verify against actual midnight-node :9615/metrics output —
+      # standard Substrate nodes expose substrate_block_height{status="best"}.
+      - alert: MidnightChainStall
+        expr: increase(substrate_block_height{status="best",job="midnight-node"}[5m]) < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Midnight node best block has not advanced in 5 minutes"
+          description: >
+            Midnight best block height static for 5+ minutes.
+            Response: check peer count, journalctl for midnight-node, check bootstrap status (G14).
+
+      # Midnight finality lag: best block is more than 10 blocks ahead of finalized.
+      # While best advances, if finalized lags it indicates consensus problems.
+      - alert: MidnightFinalityLag
+        expr: >
+          (substrate_block_height{status="best",job="midnight-node"}
+          - substrate_block_height{status="finalized",job="midnight-node"}) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Midnight node finality is lagging more than 10 blocks behind best"
+          description: >
+            Best block is {{ $value }} blocks ahead of finalized.
+            Indicates peers are not reaching consensus. Check network partition or validator set issues.
+
+      # Midnight low peer count.
+      - alert: MidnightLowPeerCount
+        expr: substrate_sub_libp2p_peers_count{job="midnight-node"} < 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Midnight node has fewer than 2 connected peers"
+          description: >
+            Midnight peer count is {{ $value }}.
+            If PeerID was recently rotated, give it a few minutes to reconnect.
+            Response: check port 30333, consider rotating PeerID if banned (see G13 in runbook).
+
+      # ── All services ─────────────────────────────────────────────────────────────
+
+      # Service down: any FNO process not responding to Prometheus scrapes for 2 minutes.
+      # Catches any crash regardless of cause — OOM, segfault, config error, manual stop.
+      # 2-minute window avoids noise from planned restarts.
       - alert: ServiceDown
         expr: up{job=~"cardano-node|cardano-db-sync|midnight-node"} == 0
         for: 2m
@@ -43,6 +91,6 @@ groups:
         annotations:
           summary: "{{ $labels.job }} is not responding"
           description: >
-            Service {{ $labels.job }} has been unreachable for 2+ minutes — process likely crashed.
-            Response: systemctl status {{ $labels.job }}, check exit code and last log lines,
+            {{ $labels.job }} has been unreachable for 2+ minutes — process likely crashed.
+            Response: systemctl status, check exit code and last log lines,
             restart if transient — investigate before restarting if it was an OOM kill.

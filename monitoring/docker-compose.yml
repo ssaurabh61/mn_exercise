@@ -44,10 +44,7 @@ services:
     image: prom/node-exporter:v1.8.0
     container_name: fno-node-exporter
     command:
-      - "--path.rootfs=/host"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
-    volumes:
-      - /:/host:ro,rslave
     network_mode: host
     pid: host
     restart: unless-stopped
