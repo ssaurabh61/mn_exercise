@@ -71,7 +71,9 @@ expr: increase(substrate_block_height{status="best",job="midnight-node"}[5m]) < 
 for: 5m
 ```
 
-Same logic as CardanoChainStall but for the FNO's own chain. Stalled Midnight block height with Cardano healthy usually means a peer ban or bootstrap issue (see G13/G14 in the runbook).
+Same logic as CardanoChainStall but for the FNO's own chain. Stalled Midnight block height with Cardano healthy usually means a peer ban or bootstrap issue (see Issue 13/14 in the runbook).
+
+> **Metric name assumption:** `substrate_block_height` is the standard metric exported by Substrate-based nodes at the `:9615/metrics` endpoint. This is the expected format based on the Substrate framework that Midnight is built on. The midnight-node was confirmed running and exporting metrics at port 9615, but the node did not advance past `best: #0` during setup (pre-whitelisting state), so the exact metric names from a live Midnight node were not verified against a fully synced instance. If the metric name differs in a future release, update the `expr` accordingly.
 
 ---
 
@@ -93,7 +95,7 @@ expr: substrate_sub_libp2p_peers_count{job="midnight-node"} < 2
 for: 5m
 ```
 
-Fewer than 2 peers on midnight-node usually means the PeerID got soft-banned. If this fires after a restart, rotate the network key (see G13 in runbook).
+Fewer than 2 peers on midnight-node usually means the PeerID got soft-banned. If this fires after a restart, rotate the network key (see Issue 13 in runbook).
 
 ---
 

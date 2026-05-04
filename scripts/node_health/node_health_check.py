@@ -25,6 +25,17 @@ Exit codes:
     0 — all services healthy
     1 — one or more services unhealthy or unreachable
     2 — bad arguments
+
+Dependency note — Prometheus scrape mode:
+    Services configured with scrape_type=prometheus are polled via the
+    Prometheus /metrics endpoint on the node directly — this script does NOT
+    require the Prometheus server itself to be running. However, if a service
+    is configured to be scraped through a Prometheus remote endpoint (e.g. via
+    the monitoring stack in monitoring/), and that stack is down, the script
+    will report those services as unreachable regardless of whether the
+    underlying node is healthy. For reliable liveness checks, prefer
+    scrape_type=substrate_rpc for the midnight-node, which polls the node's
+    own JSON-RPC port directly and is independent of the monitoring stack.
 """
 
 import argparse

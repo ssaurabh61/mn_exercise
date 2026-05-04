@@ -22,6 +22,16 @@ Exit codes:
     0 — all operators responded
     1 — one or more operators still pending
     2 — fatal error (bad config, unreadable file, etc.)
+
+Security note — response authenticity:
+    This script validates that the returned value is a well-formed public key
+    (hex string, expected length) but does NOT verify that the key is owned by
+    the operator who returned it. A MITM or misconfigured endpoint could return
+    a valid-looking key that belongs to a different party, which would silently
+    poison the collection. In a production deployment, responses should be
+    signed by a pre-registered operator identity (e.g. a TLS client certificate
+    or a separate proof-of-possession signature over the returned key) so that
+    the coordinator can cryptographically confirm ownership before accepting it.
 """
 
 import argparse
