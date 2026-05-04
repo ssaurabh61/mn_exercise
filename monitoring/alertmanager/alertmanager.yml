@@ -57,16 +57,19 @@ receivers:
 inhibit_rules:
   # If cardano-node is down, suppress the chain-stall alert — they're the same
   # incident. No point getting paged twice for a single failure.
+  # equal: ["instance"] ensures inhibition is scoped to the same node instance;
+  # a ServiceDown on one instance will not suppress ChainStall alerts from
+  # a different instance (relevant in multi-node setups).
   - source_match:
       alertname: ServiceDown
       job: cardano-node
     target_match:
       alertname: CardanoChainStall
-    equal: []
+    equal: ["instance"]
   # Same for midnight-node.
   - source_match:
       alertname: ServiceDown
       job: midnight-node
     target_match:
       alertname: MidnightChainStall
-    equal: []
+    equal: ["instance"]

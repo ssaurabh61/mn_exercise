@@ -383,6 +383,21 @@ def diff_reports(previous: dict, current: dict) -> list[dict]:
     return regressions
 
 
+def prune_old_reports(report_dir: Path, keep: int) -> None:
+    """
+    Delete the oldest health_*.json reports so that at most `keep` reports
+    remain in report_dir. A value of 0 (or negative) disables pruning.
+    """
+    if keep <= 0:
+        return
+    reports = sorted(report_dir.glob("health_*.json"), reverse=True)
+    for old in reports[keep:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass  # best-effort; a locked or already-deleted file is not fatal
+
+
 def load_previous_report(report_dir: Path, current_path: Path) -> dict | None:
     """Return parsed contents of the most recent prior report, or None."""
     candidates = sorted(
@@ -441,7 +456,7 @@ def print_report(report: dict, quiet: bool) -> None:
 # Single run
 # ---------------------------------------------------------------------------
 
-def run_once(services: dict, report_dir: Path, timeout: int, quiet: bool) -> int:
+def run_once(services: dict, report_dir: Path, timeout: int, quiet: bool, keep_reports: int = 0) -> int:
     """Evaluate all services, write report, print summary. Returns exit code."""
     report_dir.mkdir(parents=True, exist_ok=True)
 
@@ -473,6 +488,7 @@ def run_once(services: dict, report_dir: Path, timeout: int, quiet: bool) -> int
         print(f"[error] Could not write report to {report_path}: {exc}", file=sys.stderr)
 
     print_report(report, quiet)
+    prune_old_reports(report_dir, keep_reports)
     return 0 if overall_healthy else 1
 
 
@@ -517,6 +533,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Suppress output when all services are healthy (useful for cron)",
     )
+    parser.add_argument(
+        "--keep-reports",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Keep only the N most recent reports, deleting older ones; 0 = keep all (default: 0)",
+    )
     return parser.parse_args()
 
 
@@ -533,13 +556,13 @@ def main() -> int:
         last_exit = 0
         try:
             while True:
-                last_exit = run_once(services, report_dir, args.timeout, args.quiet)
+                last_exit = run_once(services, report_dir, args.timeout, args.quiet, args.keep_reports)
                 time.sleep(args.interval)
         except KeyboardInterrupt:
             print("\nStopped.")
         return last_exit
 
-    return run_once(services, report_dir, args.timeout, args.quiet)
+    return run_once(services, report_dir, args.timeout, args.quiet, args.keep_reports)
 
 
 if __name__ == "__main__":

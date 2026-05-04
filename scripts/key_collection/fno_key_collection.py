@@ -88,12 +88,16 @@ def load_operators(path: Path) -> list[dict]:
     if not isinstance(operators, list) or len(operators) == 0:
         _fatal(f"'operators' must be a non-empty array in {path}")
 
+    seen_ids: set[str] = set()
     for i, op in enumerate(operators):
         missing = REQUIRED_OPERATOR_FIELDS - set(op.keys())
         if missing:
             _fatal(f"Operator at index {i} is missing required fields: {missing}")
         if not isinstance(op["id"], str) or not op["id"].strip():
             _fatal(f"Operator at index {i} has an empty or non-string 'id'")
+        if op["id"] in seen_ids:
+            _fatal(f"Duplicate operator id '{op['id']}' at index {i} in {path}")
+        seen_ids.add(op["id"])
         _validate_url(op["key_endpoint"], context=f"operator '{op['id']}'")
 
     return operators
@@ -424,6 +428,14 @@ def main() -> int:
             print(f"[warn] Unknown operator ID(s) specified: {', '.join(sorted(unknown))}", file=sys.stderr)
 
     state = load_state(state_path)
+
+    if args.retry and not args.dry_run and state:
+        # Back up current state to disk before clearing it for retry.
+        # If the run crashes mid-way and the state file has not yet been
+        # written back, previously collected keys can be recovered from here.
+        backup_path = state_path.with_suffix(".pre_retry.json")
+        save_json(backup_path, state)
+        print(f"[info] Pre-retry state backed up to {backup_path}")
 
     if args.dry_run:
         print(f"[dry-run] No requests will be made.\n")
