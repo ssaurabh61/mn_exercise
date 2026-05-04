@@ -70,10 +70,11 @@ python3 scripts/key_collection/fno_key_collection.py --operator fno-delta --retr
 # Target multiple specific operators
 python3 scripts/key_collection/fno_key_collection.py --operator fno-delta --operator fno-echo
 
-# Custom output directory and slower network timeout
-python3 scripts/key_collection/fno_key_collection.py \
-    --output-dir /var/log/fno-keys \
-    --timeout 30
+# Slower network: increase timeout and allow more retry attempts
+python3 scripts/key_collection/fno_key_collection.py --timeout 30 --attempts 5
+
+# Custom output directory
+python3 scripts/key_collection/fno_key_collection.py --output-dir /var/log/fno-keys
 ```
 
 ### Exit codes
@@ -91,7 +92,8 @@ python3 scripts/key_collection/fno_key_collection.py \
 | `--operators FILE` | `key_collection/operators.json` | Operator list |
 | `--state FILE` | `reports/key_collection_state.json` | Persistent state file |
 | `--output-dir DIR` | `reports/` | Where to write JSON + CSV reports |
-| `--timeout SECS` | `10` | HTTP request timeout per operator |
+| `--timeout SECS` | `10` | Per-attempt HTTP connection timeout |
+| `--attempts N` | `3` | Max retry attempts per operator on transient failures (timeouts, 5xx). Exponential backoff: 1s, 2s, 4s between tries. 4xx and malformed responses are not retried. |
 | `--retry` | off | Re-request even already-collected keys |
 | `--operator ID` | all | Only collect from this ID (repeatable) |
 | `--dry-run` | off | Preview without making any HTTP requests |
@@ -113,64 +115,64 @@ Option C is the strongest demonstration because every health check runs against 
 
 ## Script: `node_health_check.py`
 
+### Configuration
+
+Service definitions live in `services.json` alongside the script — separate from the code so you can add, remove, or reconfigure services without touching Python. Each entry specifies a URL, a `scrape_type`, the health checks to run, and which metrics to snapshot for stall detection.
+
+Two scrape types are supported:
+
+| `scrape_type` | Protocol | Used by |
+|---|---|---|
+| `prometheus` | HTTP GET `/metrics`, Prometheus text format | cardano-node, cardano-db-sync, host |
+| `substrate_rpc` | HTTP POST JSON-RPC 2.0 (`system_health`, `chain_getHeader`, etc.) | midnight-node |
+
+`midnight-node` uses `substrate_rpc` because the Substrate JSON-RPC port (9944) is open by default on any running node, whereas the Prometheus metrics port (9615) only exists if the node is explicitly started with `--prometheus-port`.
+
 ### What it does
 
-1. **Polls** Prometheus metrics endpoints for each running service:
-   - `cardano-node` → `http://localhost:12798/metrics`
-   - `cardano-db-sync` → `http://localhost:8080/metrics`
-   - `midnight-node` → `http://localhost:9615/metrics`
-   - System resources via `node_exporter` → `http://localhost:9100/metrics`
+1. **Scrapes** each service using its configured protocol:
+   - `cardano-node` → `http://127.0.0.1:12798/metrics` (Prometheus)
+   - `cardano-db-sync` → `http://127.0.0.1:8080/metrics` (Prometheus)
+   - `midnight-node` → `http://127.0.0.1:9944` (Substrate JSON-RPC)
+   - System resources via `node_exporter` → `http://127.0.0.1:9100/metrics` (Prometheus)
 
-2. **Evaluates** a set of health conditions against configurable thresholds:
-   - Block height has advanced since last check (chain is moving)
-   - Peer count is above minimum threshold (default: 3)
-   - DB sync lag is below a threshold (default: 300 slots)
-   - All services are reachable (HTTP 200)
-   - Disk usage on `/mnt/d` is below threshold (default: 90%)
+2. **Evaluates** health checks per service:
 
-3. **Writes** a timestamped JSON health report to a configurable output directory
+   | Service | Check | Condition |
+   |---|---|---|
+   | cardano-node | peers_sufficient | connected peers >= 3 |
+   | cardano-node | block_height_nonzero | block height > 0 |
+   | midnight-node | peers_sufficient | connected peers >= 2 |
+   | midnight-node | best_block_nonzero | best block height > 0 |
+   | midnight-node | finality_lag_ok | best - finalized <= 10 blocks |
+   | all | service_up | endpoint reachable |
 
-4. **Diffs** against the previous report and prints any regressions (conditions that were healthy and are now degraded)
+3. **Writes** a timestamped JSON report to the report directory
 
-5. **Exits non-zero** if any critical condition fails — makes it cron/CI friendly
+4. **Diffs** against the previous report and surfaces:
+   - `health_degraded` — service was healthy last run, is unhealthy now
+   - `metric_stalled` — block height unchanged between consecutive runs (stalled chain)
+
+5. **Exits non-zero** if any service is unhealthy — cron/CI friendly
 
 ### Output format
 
 ```json
 {
-  "timestamp": "2026-05-02T14:32:00Z",
-  "overall": "healthy",
-  "services": {
-    "cardano-node": {
-      "reachable": true,
-      "block_height": 12345678,
-      "peer_count": 12,
-      "conditions": {
-        "block_advancing": { "status": "ok", "value": 12345678 },
-        "peers_sufficient": { "status": "ok", "value": 12 }
-      }
-    },
-    "cardano-db-sync": {
-      "reachable": true,
-      "sync_lag_slots": 42,
-      "conditions": {
-        "sync_lag_ok": { "status": "ok", "value": 42 }
-      }
-    },
-    "midnight-node": {
-      "reachable": true,
-      "block_height": 87654,
-      "conditions": {
-        "block_advancing": { "status": "ok", "value": 87654 }
-      }
+  "timestamp": "2026-05-02T14:32:00+00:00",
+  "overall_healthy": true,
+  "services": [
+    {
+      "service": "cardano-node",
+      "healthy": true,
+      "checks": [
+        { "name": "service_up", "description": "Prometheus endpoint is reachable", "passed": true, "detail": "endpoint reachable" },
+        { "name": "peers_sufficient", "description": "connected peers >= 3", "passed": true, "detail": "12.0 >= 3 → pass" },
+        { "name": "block_height_nonzero", "description": "block height > 0 (node has synced at least one block)", "passed": true, "detail": "4671500.0 > 0 → pass" }
+      ],
+      "metric_snapshot": { "cardano_node_metrics_blockNum_int": 4671500.0 }
     }
-  },
-  "system": {
-    "disk_pct_mnt_d": 61.2,
-    "conditions": {
-      "disk_ok": { "status": "ok", "value": 61.2 }
-    }
-  },
+  ],
   "regressions": []
 }
 ```
@@ -178,8 +180,10 @@ Option C is the strongest demonstration because every health check runs against 
 ### Regression diff example
 
 ```
-[REGRESSION] cardano-node.peers_sufficient: was ok (12 peers) → now degraded (2 peers)
-[REGRESSION] midnight-node.block_advancing: was ok → now degraded (height unchanged for 2 checks)
+REGRESSIONS since last run:
+  [cardano-node] was healthy, now unhealthy
+    failed checks: peers_sufficient
+  [midnight-node] substrate_block_height{status="best"} unchanged between runs (value: 87654.0)
 ```
 
 ---
@@ -187,37 +191,34 @@ Option C is the strongest demonstration because every health check runs against 
 ## Usage
 
 ```bash
-# Basic run (defaults: output to ./reports/, thresholds from defaults)
-python3 scripts/node_health_check.py
+# Single run
+python3 scripts/node_health/node_health_check.py
 
-# Custom output directory and peer threshold
-python3 scripts/node_health_check.py --output-dir /var/log/fno-health --min-peers 5
+# Custom report directory
+python3 scripts/node_health/node_health_check.py --report-dir /var/log/fno-health
 
-# Continuous mode (poll every 60s)
-python3 scripts/node_health_check.py --interval 60
+# Continuous mode — poll every 60 seconds
+python3 scripts/node_health/node_health_check.py --interval 60
 
-# Cron example (every 5 minutes, log to file)
-*/5 * * * * /usr/bin/python3 /home/knight/mn_exercise/scripts/node_health_check.py \
-    --output-dir /var/log/fno-health >> /var/log/fno-health/cron.log 2>&1
+# Cron — silent when healthy, logs only on failure (every 5 minutes)
+*/5 * * * * python3 /path/to/scripts/node_health/node_health_check.py \
+    --report-dir /var/log/fno-health --quiet >> /var/log/fno-health/cron.log 2>&1
 ```
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--report-dir DIR` | `../reports/` | Where to write timestamped JSON reports |
+| `--timeout SECS` | `5` | Per-scrape HTTP timeout |
+| `--interval SECS` | single run | Poll continuously; Ctrl-C to stop |
+| `--quiet` | off | Suppress output when all healthy (for cron) |
 
 ### Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | All conditions healthy |
-| `1` | One or more conditions degraded |
-| `2` | One or more services unreachable |
+| `0` | All services healthy |
+| `1` | One or more services unhealthy or unreachable |
+| `2` | Bad arguments |
 
----
-
-## TODO (Implementation)
-
-- [ ] Write `node_health_check.py` (Python 3, stdlib only — no external deps needed)
-- [ ] Implement metrics parser for Prometheus text format
-- [ ] Implement health condition evaluators
-- [ ] Implement JSON report writer with timestamp-named files
-- [ ] Implement diff logic against previous report
-- [ ] Implement `--interval` continuous mode
-- [ ] Add `--config` flag to load thresholds from a YAML file
-- [ ] Test against live preprod node once sync completes

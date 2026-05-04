@@ -718,7 +718,7 @@ Midnight-node keeps its own internal cache of Cardano state as it imports Midnig
 
 **Fix:** A chain database snapshot from Midnight Foundation. In production FNO onboarding, Midnight Foundation provides a snapshot after `partner-chains-public-keys.json` is submitted and keys are whitelisted. The snapshot provides a pre-built midnight-node paritydb from a recent block, skipping the bootstrap gap entirely.
 
-**Evidence captured:** Node connects to preprod network (up to 7 peers with fresh PeerID), downloads chain data at 50–150 kiB/s, db-sync queried successfully (slow SQL queries returning real committee data), all keys generated and keystore populated, `partner-chains-public-keys.json` produced. All infrastructure is correctly configured; the block import blocker is a bootstrap sequencing requirement in the FNO onboarding process. Full log committed at [`notes/midnight-node-log-evidence.txt`](midnight-node-log-evidence.txt).
+**Evidence captured:** Node connects to preprod network (up to 7 peers with fresh PeerID), downloads chain data at 50–150 kiB/s, db-sync queried successfully (slow SQL queries returning real committee data), all keys generated and keystore populated, `partner-chains-public-keys.json` produced. All infrastructure is correctly configured; the block import blocker is a bootstrap sequencing requirement in the FNO onboarding process. Full log committed at [`docs/evidence/midnight-node-log-evidence.txt`](evidence/midnight-node-log-evidence.txt).
 
 ---
 

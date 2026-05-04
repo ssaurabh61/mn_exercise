@@ -1,0 +1,101 @@
+{
+    "cardano-node": {
+        "url": "http://127.0.0.1:12798/metrics",
+        "track_metrics": [
+            "cardano_node_metrics_blockNum_int"
+        ],
+        "checks": [
+            {
+                "name": "service_up",
+                "type": "service_up",
+                "description": "Prometheus endpoint is reachable"
+            },
+            {
+                "name": "peers_sufficient",
+                "type": "threshold",
+                "metric": "cardano_node_metrics_connectedPeers_int",
+                "op": ">=",
+                "threshold": 3,
+                "description": "connected peers >= 3"
+            },
+            {
+                "name": "block_height_nonzero",
+                "type": "threshold",
+                "metric": "cardano_node_metrics_blockNum_int",
+                "op": ">",
+                "threshold": 0,
+                "description": "block height > 0 (node has synced at least one block)"
+            }
+        ]
+    },
+    "cardano-db-sync": {
+        "url": "http://127.0.0.1:8080/metrics",
+        "track_metrics": [],
+        "checks": [
+            {
+                "name": "service_up",
+                "type": "service_up",
+                "description": "Prometheus endpoint is reachable"
+            }
+        ]
+    },
+    "midnight-node": {
+        "url": "http://127.0.0.1:9944",
+        "scrape_type": "substrate_rpc",
+        "track_metrics": [
+            "rpc.best_block",
+            "rpc.finalized_block"
+        ],
+        "checks": [
+            {
+                "name": "service_up",
+                "type": "service_up",
+                "description": "JSON-RPC endpoint is reachable"
+            },
+            {
+                "name": "peers_sufficient",
+                "type": "threshold",
+                "metric": "rpc.peers",
+                "op": ">=",
+                "threshold": 2,
+                "description": "connected peers >= 2"
+            },
+            {
+                "name": "not_syncing",
+                "type": "threshold",
+                "metric": "rpc.is_syncing",
+                "op": "==",
+                "threshold": 0,
+                "description": "node is caught up (not actively syncing)"
+            },
+            {
+                "name": "best_block_nonzero",
+                "type": "threshold",
+                "metric": "rpc.best_block",
+                "op": ">",
+                "threshold": 0,
+                "description": "best block height > 0"
+            },
+            {
+                "name": "finality_lag_ok",
+                "type": "derived_diff",
+                "metric_a": "rpc.best_block",
+                "metric_b": "rpc.finalized_block",
+                "op": "<=",
+                "threshold": 10,
+                "description": "finality lag (best - finalized) <= 10 blocks"
+            }
+        ]
+    },
+    "host": {
+        "url": "http://127.0.0.1:9100/metrics",
+        "track_metrics": [],
+        "checks": [
+            {
+                "name": "service_up",
+                "type": "service_up",
+                "description": "node_exporter is reachable"
+            }
+        ]
+    }
+}

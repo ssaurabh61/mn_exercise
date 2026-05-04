@@ -4,12 +4,12 @@
 
 A complete Midnight Founding Node Operator (FNO) setup running on Windows via WSL 2, targeting the Midnight preprod network.
 
-### Section 1 — Node Setup (`notes/RUNBOOK.md`)
+### Section 1 — Node Setup (`docs/RUNBOOK.md`)
 Full end-to-end runbook for onboarding as an FNO on preprod. Covers WSL 2 setup on D: drive, Cardano node, PostgreSQL 17, cardano-db-sync, and Midnight node installation and key generation. Written as a hand-off document for an engineer who knows DevOps but not Midnight specifically. Includes 15 documented gotchas hit during the actual live setup.
 
 **Stack:** Ubuntu 24.04 (WSL 2) · Cardano node 10.6.2 · cardano-db-sync 13.6.0.7 · PostgreSQL 17 · Midnight node 0.22.2
 
-**Status at submission:** Cardano node live-following chain tip (block ~4,671,500). db-sync fully synced (99.9999%, verified — see `notes/db-sync-verification.md`). Midnight node installed, all validator keys generated, keystore populated, `partner-chains-public-keys.json` produced. Node connects to preprod bootnodes (1–3 peers) and downloads chain data.
+**Status at submission:** Cardano node live-following chain tip (block ~4,671,500). db-sync fully synced (99.9999%, verified — see `docs/evidence/db-sync-verification.md`). Midnight node installed, all validator keys generated, keystore populated, `partner-chains-public-keys.json` produced. Node connects to preprod bootnodes (1–3 peers) and downloads chain data.
 
 **Known issue:** Block import stalls at `best: #0` due to a bootstrap sequencing requirement. midnight-node maintains its own internal Cardano state cache built from processed Midnight blocks — since a fresh node has no Midnight blocks yet, it cannot verify peer block announcements that reference recent Cardano state. The referenced Cardano block (`aee88622...`, block 4,526,090) is confirmed present in db-sync; the issue is midnight-node's own empty internal cache. **Fix:** A chain snapshot from Midnight Foundation, provided as part of the official FNO whitelisting process after `partner-chains-public-keys.json` is submitted. All infrastructure is correctly configured. Documented as G14 in the runbook.
 
@@ -51,7 +51,7 @@ python3 scripts/node_health/node_health_check.py --report-dir /var/log/fno-healt
 
 Both scripts use Python 3 stdlib only — no pip dependencies.
 
-### Section 4 — Security (`notes/SECURITY.md`)
+### Section 4 — Security (`docs/SECURITY.md`)
 Key storage (KMS + Vault), rotation procedure, and incident response answers.
 
 ---

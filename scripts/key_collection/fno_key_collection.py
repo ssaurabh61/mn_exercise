@@ -13,6 +13,7 @@ Usage:
     --state FILE        Persistent state across runs (default: reports/key_collection_state.json)
     --output-dir DIR    Where to write JSON + CSV reports (default: reports/)
     --timeout SECS      HTTP request timeout per operator (default: 10)
+    --attempts N        Per-operator retry attempts on transient failures (default: 3)
     --retry             Re-request keys even from operators who already responded
     --operator ID       Only collect from this operator ID (repeatable)
     --dry-run           Print what would happen without making any HTTP requests
@@ -27,6 +28,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -134,13 +136,12 @@ def _fatal(message: str) -> None:
 # HTTP
 # ---------------------------------------------------------------------------
 
-def fetch_key(endpoint: str, timeout: int) -> tuple[str, str]:
+def _fetch_once(endpoint: str, timeout: int) -> tuple[str, str, bool]:
     """
-    GET the operator's key endpoint.
-    Returns (public_key, error_message). Exactly one will be a non-empty string.
-
-    Error strings are kept human-readable and specific to the failure mode so
-    operators know whether to check their server, their network, or their key format.
+    Single HTTP GET attempt.
+    Returns (public_key, error_message, retryable).
+    retryable=True for transient failures (timeouts, connection errors, 5xx).
+    retryable=False for deterministic failures (4xx, bad JSON, missing field).
     """
     try:
         req = urllib.request.Request(endpoint, headers={"User-Agent": "fno-key-collection/1.0"})
@@ -148,42 +149,65 @@ def fetch_key(endpoint: str, timeout: int) -> tuple[str, str]:
             raw = resp.read(MAX_RESPONSE_BYTES + 1)
 
         if len(raw) > MAX_RESPONSE_BYTES:
-            return "", f"response too large (> {MAX_RESPONSE_BYTES // 1024} KB)"
+            return "", f"response too large (> {MAX_RESPONSE_BYTES // 1024} KB)", False
 
         try:
             body = json.loads(raw)
         except json.JSONDecodeError as e:
-            return "", f"response is not valid JSON: {e}"
+            return "", f"response is not valid JSON: {e}", False
 
         key = body.get("public_key")
         if key is None:
-            return "", "response missing 'public_key' field"
+            return "", "response missing 'public_key' field", False
         if not isinstance(key, str) or not key.strip():
-            return "", f"'public_key' must be a non-empty string, got: {type(key).__name__}"
+            return "", f"'public_key' must be a non-empty string, got: {type(key).__name__}", False
 
-        return key.strip(), ""
+        return key.strip(), "", False
 
     except urllib.error.HTTPError as e:
-        return "", f"HTTP {e.code} {e.reason}"
+        # 5xx = server-side / transient; 4xx = client error, won't change on retry
+        retryable = e.code >= 500
+        return "", f"HTTP {e.code} {e.reason}", retryable
     except urllib.error.URLError as e:
-        # e.reason can be an ssl.SSLError or socket error — normalise to string
         reason = str(e.reason)
         if "timed out" in reason.lower():
-            return "", f"connection timed out after {timeout}s"
+            return "", f"connection timed out after {timeout}s", True
         if "connection refused" in reason.lower():
-            return "", "connection refused — endpoint may be down"
+            return "", "connection refused — endpoint may be down", True
         if "ssl" in reason.lower() or "certificate" in reason.lower():
-            return "", f"SSL error: {reason}"
-        return "", f"network error: {reason}"
+            return "", f"SSL error: {reason}", False
+        return "", f"network error: {reason}", True
     except OSError as e:
-        return "", f"OS error: {e}"
+        return "", f"OS error: {e}", True
+
+
+def fetch_key(endpoint: str, timeout: int, attempts: int) -> tuple[str, str]:
+    """
+    GET the operator's key endpoint, retrying on transient failures.
+    Returns (public_key, error_message). Exactly one will be a non-empty string.
+
+    Uses exponential backoff between attempts (1s, 2s, 4s, ...).
+    Deterministic failures (4xx, malformed response) are not retried.
+    """
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        key, error, retryable = _fetch_once(endpoint, timeout)
+        if key:
+            return key, ""
+        last_error = error
+        if not retryable or attempt == attempts:
+            break
+        delay = 2 ** (attempt - 1)  # 1s, 2s, 4s ...
+        print(f"\n      attempt {attempt}/{attempts} failed ({error}) — retrying in {delay}s ...", end=" ", flush=True)
+        time.sleep(delay)
+    return "", last_error
 
 
 # ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
 
-def collect_key(operator: dict, state: dict, timeout: int, dry_run: bool) -> dict:
+def collect_key(operator: dict, state: dict, timeout: int, attempts: int, dry_run: bool) -> dict:
     """
     Attempt to collect the key for one operator.
     Returns a result dict and updates state in place.
@@ -206,7 +230,7 @@ def collect_key(operator: dict, state: dict, timeout: int, dry_run: bool) -> dic
         }
 
     print(f"  [ ] {op_id:20s} contacting {operator['key_endpoint']} ...", end=" ", flush=True)
-    key, error = fetch_key(operator["key_endpoint"], timeout)
+    key, error = fetch_key(operator["key_endpoint"], timeout, attempts)
 
     if key:
         print("OK")
@@ -237,6 +261,7 @@ def run_collection(
     operators: list,
     state: dict,
     timeout: int,
+    attempts: int,
     retry: bool,
     dry_run: bool,
     filter_ids: set[str] | None,
@@ -254,7 +279,7 @@ def run_collection(
     for op in operators:
         if filter_ids and op["id"] not in filter_ids:
             continue
-        results.append(collect_key(op, state, timeout, dry_run))
+        results.append(collect_key(op, state, timeout, attempts, dry_run))
 
     return results
 
@@ -346,6 +371,13 @@ def parse_args() -> argparse.Namespace:
         help="HTTP request timeout per operator in seconds (default: 10)",
     )
     parser.add_argument(
+        "--attempts",
+        type=int,
+        default=3,
+        metavar="N",
+        help="Max retry attempts per operator on transient failures (default: 3, min: 1)",
+    )
+    parser.add_argument(
         "--retry",
         action="store_true",
         help="Re-request keys even from operators who already responded",
@@ -386,8 +418,9 @@ def main() -> int:
     if args.dry_run:
         print(f"[dry-run] No requests will be made.\n")
 
-    print(f"Collecting keys from {len(operators)} operator(s):\n")
-    results = run_collection(operators, state, args.timeout, args.retry, args.dry_run, filter_ids)
+    attempts = max(1, args.attempts)  # guard against --attempts 0
+    print(f"Collecting keys from {len(operators)} operator(s) (up to {attempts} attempt(s) each):\n")
+    results = run_collection(operators, state, args.timeout, attempts, args.retry, args.dry_run, filter_ids)
 
     if not args.dry_run:
         save_json(state_path, state)
