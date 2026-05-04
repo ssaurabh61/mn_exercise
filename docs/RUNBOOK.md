@@ -23,7 +23,9 @@ The Cardano chain block data lives on `/mnt/d` to avoid filling the WSL virtual 
 - [Phase 7 — Verify DB Sync (wait for ~100%)](#phase-7--verify-db-sync-wait-for-100)
 - [Phase 8 — Install Midnight Node & Generate Validator Keys](#phase-8--install-midnight-node--generate-validator-keys)
   - [Start the Midnight node](#start-the-midnight-node)
-- [Gotchas & Issues Hit During Setup](#gotchas--issues-hit-during-setup)
+- [Steady-State Health Reference](#steady-state-health-reference)
+- [Troubleshooting](#troubleshooting)
+  - [Troubleshooting Decision Tree](#troubleshooting-decision-tree)
 - [Cleanup (Reset to Clean State)](#cleanup-reset-to-clean-state)
 
 ---
@@ -36,7 +38,7 @@ The Cardano chain block data lives on `/mnt/d` to avoid filling the WSL virtual 
 | `NETWORK` | `preprod` | Target Cardano network; drives paths and URLs throughout |
 | `CARDANO_VERSION` | `10.6.2` | Pin this — must match db-sync |
 | `DB_SYNC_VERSION` | `13.6.0.7` | Must match schema dir in tarball |
-| `MIDNIGHT_RELEASE` | `node-0.22.2` | Pin to this — matches the official FNO Preprod Notion docs. See G8 on why using the latest (0.22.5) is not recommended. |
+| `MIDNIGHT_RELEASE` | `node-0.22.2` | Pin to this — matches the official FNO Preprod Notion docs. See Issue 8 on why using the latest (0.22.5) is not recommended. |
 
 ---
 
@@ -149,7 +151,7 @@ sudo apt install -y curl tar jq git rsync ca-certificates
 mkdir -p ~/.local/bin ~/.local/share ~/cardano-data ~/res ~/tmp/mithril
 
 # Only the Cardano chain block DB goes on D: — it's ~40 GB and sequential-read-heavy
-# db-sync state and Midnight node data stay on ext4 (socket/lock file compatibility, see G9)
+# db-sync state and Midnight node data stay on ext4 (socket/lock file compatibility, see Issue 9)
 mkdir -p /mnt/d/cardano/db          # Mithril snapshot and cardano-node DB land here
 
 # Symlink so cardano-data/db points to D:
@@ -394,7 +396,7 @@ Look for lines like `Subscription started` or `block ... after` in the logs to c
 ## Phase 7 — Verify DB Sync (wait for ~100%)
 
 ```bash
-# Latest synced block  (use -h 127.0.0.1 to force TCP auth — see G3)
+# Latest synced block  (use -h 127.0.0.1 to force TCP auth — see Issue 3)
 psql -h 127.0.0.1 -U midnight -d cexplorer -c "SELECT block_no, slot_no, time FROM block ORDER BY id DESC LIMIT 1;"
 
 # Sync percentage
@@ -417,7 +419,7 @@ Do not proceed to Phase 8 until `sync_percent` reaches ~100.
 ## Phase 8 — Install Midnight Node & Generate Validator Keys
 
 ```bash
-# Download and install — use 0.22.2 per official FNO docs (see G8 before upgrading)
+# Download and install — use 0.22.2 per official FNO docs (see Issue 8 before upgrading)
 MIDNIGHT_RELEASE="node-0.22.2"
 cd ~/tmp
 curl -L -O "https://github.com/midnightntwrk/midnight-node/releases/download/${MIDNIGHT_RELEASE}/midnight-node-0.22.2-linux-amd64.tar.gz"
@@ -425,7 +427,7 @@ tar -xvzf midnight-node-0.22.2-linux-amd64.tar.gz
 
 mv ~/tmp/midnight-node ~/.local/bin/
 mv ~/tmp/res ~/res
-# The tarball nests contents under an extra res/ — flatten it (see G10)
+# The tarball nests contents under an extra res/ — flatten it (see Issue 10)
 mv ~/res/res/* ~/res/ && rmdir ~/res/res
 chmod +x ~/.local/bin/midnight-node
 source ~/.bashrc
@@ -450,7 +452,7 @@ chmod 600 aura.json grandpa.json cross_chain.json
 NETWORK="preprod"
 NETWORK_DIR="$HOME/data/chains/midnight_${NETWORK}/network"
 mkdir -p "$NETWORK_DIR" && chmod 700 "$NETWORK_DIR"
-# --chain is required; without it the command errors (see G11)
+# --chain is required; without it the command errors (see Issue 11)
 midnight-node key generate-node-key --file "$NETWORK_DIR/secret_ed25519" --chain ~/res/preprod/chain-spec-raw.json
 midnight-node key inspect-node-key --file "$NETWORK_DIR/secret_ed25519"   # prints PeerID
 
@@ -458,7 +460,7 @@ midnight-node key inspect-node-key --file "$NETWORK_DIR/secret_ed25519"   # prin
 KEYSTORE_PATH="$HOME/data/chains/midnight_preprod/keystore"
 mkdir -p "$KEYSTORE_PATH"
 
-# --chain is required for all key insert calls too (see G11)
+# --chain is required for all key insert calls too (see Issue 11)
 midnight-node key insert --keystore-path "$KEYSTORE_PATH" --scheme sr25519 --key-type aura \
   --chain ~/res/preprod/chain-spec-raw.json \
   --suri "$(jq -r .secretPhrase aura.json)"
@@ -490,7 +492,7 @@ Create a `.env` file to hold all required environment variables:
 
 ```bash
 cat > ~/.env << 'EOF'
-# DB connection — must be a URL, not key=value format (see G12)
+# DB connection — must be a URL, not key=value format (see Issue 12)
 # Replace 'midnight' (password) with the password you set in Phase 5
 DB_SYNC_POSTGRES_CONNECTION_STRING=postgresql://midnight:your_secure_password@localhost:5432/cexplorer
 
@@ -527,29 +529,248 @@ midnight-node \
 
 ---
 
-## Gotchas & Issues Hit During Setup
+## Steady-State Health Reference
+
+This is what a correctly operating FNO stack looks like. Use this as the baseline before declaring a system healthy and before starting incident investigation. Check layers top-to-bottom — a failure in a lower layer will cascade upward.
+
+---
+
+### Layer 1 — cardano-node
+
+**What healthy looks like:**
+- Service is active (running), not crash-looping
+- Socket exists at `~/cardano-data/node.socket`
+- Node is at or within 1–2 slots of chain tip
+- No repeated `ExceededTimeLimit` or `PeerDisconnected` floods in logs
+
+```bash
+# Service status
+systemctl is-active cardano-node
+
+# Socket present
+ls -lh ~/cardano-data/node.socket
+
+# Chain tip — era should be "Conway", syncProgress should be "1.00"
+cardano-cli query tip --testnet-magic 1 --socket-path ~/cardano-data/node.socket
+```
+
+**Expected output:**
+```json
+{
+  "era": "Conway",
+  "syncProgress": "1.00",
+  "slot": 122189878,
+  "block": 4671291
+}
+```
+
+**Not healthy if:** `syncProgress` < `"1.00"`, era is `"Byron"` (still replaying), or socket is absent.
+
+---
+
+### Layer 2 — PostgreSQL + cardano-db-sync
+
+**What healthy looks like:**
+- PostgreSQL service active
+- db-sync service active, not crash-looping
+- `sync_percent` > 99.99
+- Latest indexed block within 2–3 blocks of cardano-node tip
+- No `db-sync` log lines containing `rollback` loops or `MigrationError`
+
+```bash
+# Service status
+systemctl is-active postgresql cardano-db-sync
+
+# Sync percentage — should be >= 99.99
+psql -h 127.0.0.1 -U midnight -d cexplorer -c "
+SELECT ROUND(
+  100 * (EXTRACT(epoch FROM (MAX(time) AT TIME ZONE 'UTC')) -
+         EXTRACT(epoch FROM (MIN(time) AT TIME ZONE 'UTC')))
+  / (EXTRACT(epoch FROM (NOW() AT TIME ZONE 'UTC')) -
+     EXTRACT(epoch FROM (MIN(time) AT TIME ZONE 'UTC'))), 6) AS sync_percent
+FROM block;"
+
+# Latest indexed block — compare block_no to cardano-cli query tip output above
+psql -h 127.0.0.1 -U midnight -d cexplorer \
+  -c "SELECT block_no, slot_no, time FROM block ORDER BY id DESC LIMIT 1;"
+
+# db-sync lag — rows in this table indicate blocks received but not yet indexed
+psql -h 127.0.0.1 -U midnight -d cexplorer \
+  -c "SELECT COUNT(*) AS pending_blocks FROM block WHERE epoch_no IS NULL;"
+```
+
+**Expected output:** `sync_percent` = 99.999x, `pending_blocks` = 0, latest `block_no` matches cardano-node tip.
+
+**Not healthy if:** sync_percent stalled below 99%, `pending_blocks` > 0 and growing, or db-sync is crash-looping (`systemctl status cardano-db-sync`).
+
+---
+
+### Layer 3 — midnight-node (pre-whitelisting)
+
+Pre-whitelisting is a defined operational state, not a failure. The healthy signals here are about infrastructure readiness, not block production.
+
+**What healthy looks like:**
+- Process running, connected to 3+ peers
+- Keystore populated with all three key types: `aura`, `gran`, `cross_chain`
+- `partner-chains-public-keys.json` generated and ready for submission
+- Logs show `Validator inherent data must be provided` (expected — confirms pre-whitelisting state, not a misconfiguration)
+- No `PeerBanned`, socket errors, or db-sync connection failures in logs
+
+```bash
+# Peer count — look for "peers=N" in recent log lines (expect 3–7 on preprod)
+journalctl -u midnight-node -n 50 --no-pager | grep -E "peers=[0-9]+|best:"
+
+# Keystore populated — expect aura (sr25519), gran (ed25519), cross_chain (ecdsa)
+ls ~/data/chains/midnight_preprod/keystore/
+
+# Public key file present
+test -f ~/partner-chains-public-keys.json && cat ~/partner-chains-public-keys.json
+
+# RPC alive — expects a JSON result, not a connection error
+curl -s -X POST http://localhost:9933 \
+  -H 'Content-Type: application/json' \
+  -d '{"id":1,"jsonrpc":"2.0","method":"system_health","params":[]}'
+```
+
+**Expected RPC output:**
+```json
+{"jsonrpc":"2.0","result":{"isSyncing":false,"peers":5,"shouldHavePeers":true},"id":1}
+```
+
+**Not healthy if:** `peers` = 0 and not recovering (→ Issue 13), RPC returns connection refused, keystore directory is empty, or db-sync connection errors appear in midnight-node logs.
+
+---
+
+### Full-stack quick check
+
+Run this after any restart or change to get a one-shot view of all four services:
+
+```bash
+echo "=== Service Status ==="
+for svc in cardano-node cardano-db-sync postgresql midnight-node; do
+  printf "%-22s %s\n" "$svc" "$(systemctl is-active $svc 2>/dev/null || echo not-installed)"
+done
+
+echo ""
+echo "=== cardano-node tip ==="
+cardano-cli query tip --testnet-magic 1 --socket-path ~/cardano-data/node.socket 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f\"era={d['era']} sync={d['syncProgress']} block={d['block']}\")"
+
+echo ""
+echo "=== db-sync sync ==="
+psql -h 127.0.0.1 -U midnight -d cexplorer -t -c \
+  "SELECT 'sync_percent=' || ROUND(100*(EXTRACT(epoch FROM (MAX(time) AT TIME ZONE 'UTC'))-EXTRACT(epoch FROM (MIN(time) AT TIME ZONE 'UTC')))/(EXTRACT(epoch FROM (NOW() AT TIME ZONE 'UTC'))-EXTRACT(epoch FROM (MIN(time) AT TIME ZONE 'UTC'))),4) FROM block;" 2>/dev/null
+
+echo ""
+echo "=== midnight-node peers ==="
+curl -s -X POST http://localhost:9933 \
+  -H 'Content-Type: application/json' \
+  -d '{"id":1,"jsonrpc":"2.0","method":"system_health","params":[]}' 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin)['result']; print(f\"peers={d['peers']} syncing={d['isSyncing']}\")"
+```
+
+**Healthy output looks like:**
+```
+=== Service Status ===
+cardano-node           active
+cardano-db-sync        active
+postgresql             active
+midnight-node          active
+
+=== cardano-node tip ===
+era=Conway sync=1.00 block=4671291
+
+=== db-sync sync ===
+ sync_percent=99.9999
+
+=== midnight-node peers ===
+peers=5 syncing=false
+```
+
+---
+
+## Troubleshooting
 
 Things that actually went wrong during this setup. Saving the next person the same headaches.
 
 ---
 
-> **Windows/WSL only — skip if you're on macOS or Linux**
+## Troubleshooting Decision Tree
 
-### G1 — WSL setup pitfalls (Phases 0–1)
+Use this to identify which gotcha applies before reading the full entries below.
 
-Four things tripped us up during WSL install and configuration. None of this applies if you're on macOS or native Linux.
+### Midnight node stuck at `best: #0`
 
-**G1a — Export before unregister.** Ran `wsl --unregister` before the export finished, which permanently deleted the distro from C: with no recovery. Always confirm the `.tar` exists and is non-zero size first. Order: export → verify → unregister → import.
+```
+Is the peer count 0?
+├── YES → Has the node connected to peers on a previous run?
+│          ├── YES → Peers soft-banned the old PeerID → Issue 13 (regenerate network key)
+│          └── NO  → Check socket path is on ext4, not NTFS → Issue 9
+└── NO  → Peers connected but block not advancing
+           └── "Validator inherent data must be provided" in logs?
+                ├── YES → Node not whitelisted in permissioned_candidates yet → Issue 14
+                └── NO  → Wait — initial PostgreSQL index build takes 5–10 min on first run
+```
 
-**G1b — `wsl --import` with a downloaded rootfs fails.** Trying to `curl` the rootfs tarball from `cloud-images.ubuntu.com` gets a 286-byte HTML redirect, not the actual file. `wsl --import` then errors with "Unrecognized archive format". Use `wsl --install -d Ubuntu-24.04 --no-launch` instead.
+### cardano-node crashes or won't start
 
-**G1c — `%USERPROFILE%` is CMD syntax, not PowerShell.** Use `$env:USERPROFILE`. E.g. `Set-Content "$env:USERPROFILE\.wslconfig"`.
+```
+When does it crash?
+├── Immediately, config error → Wrong extract path for share/ tarball → Issue 2
+├── After full ledger replay, at StartedInitChainSelection → Unix socket on NTFS → Issue 9
+└── Random crash-loops → db-sync trying to connect before socket is ready → Issue 6
+```
 
-**G1d — `getpwnam(knight) failed` after import.** `wsl --import` resets to root with no users, and `wsl.conf` `[user] default=` is ignored until the user actually exists. On first launch you're root — create the user first (`useradd -m -s /bin/bash -G sudo knight && passwd knight`), set `wsl.conf`, then `wsl --shutdown` and relaunch.
+### cardano-db-sync won't start / crash-loops
+
+```
+Error message?
+├── Socket not found / ENOENT → Start db-sync only after node socket exists → Issue 6
+├── Permission denied on schema/ → Read-only schema directory after extract → Issue 7
+└── "relative URL without a base" → Connection string is key=value, not a URL → Issue 12
+```
+
+### Postgres / psql access denied
+
+```
+├── "Peer authentication failed" → Use -h 127.0.0.1, not socket path → Issue 3
+├── pgpass not used / credentials not found → Wrong home directory in pgpass path → Issue 4
+└── DB sync still at 0% after hours → Check sync_percent: SELECT sync_percent FROM chain_sync_progress;
+```
+
+### midnight-node binary panics immediately
+
+```
+├── "failed reading default.toml" → Double-nested res/ directory after extract → Issue 10
+└── "chainspec_genesis_block not configured" → Missing --chain flag on key subcommands → Issue 11
+```
+
+### Download or extract fails
+
+```
+├── gzip: stdin: not in gzip format (9-byte download) → Wrong tag in db-sync URL → Issue 5
+└── Configs land at wrong path after extract → Wrong --strip-components value → Issue 2
+```
 
 ---
 
-### G2 — Cardano node `share/` tarball has double-nested path (Phase 4)
+> **Windows/WSL only — skip if you're on macOS or Linux**
+
+### Issue 1 — WSL setup pitfalls (Phases 0–1)
+
+Four things tripped us up during WSL install and configuration. None of this applies if you're on macOS or native Linux.
+
+**Issue 1a — Export before unregister.** Ran `wsl --unregister` before the export finished, which permanently deleted the distro from C: with no recovery. Always confirm the `.tar` exists and is non-zero size first. Order: export → verify → unregister → import.
+
+**Issue 1b — `wsl --import` with a downloaded rootfs fails.** Trying to `curl` the rootfs tarball from `cloud-images.ubuntu.com` gets a 286-byte HTML redirect, not the actual file. `wsl --import` then errors with "Unrecognized archive format". Use `wsl --install -d Ubuntu-24.04 --no-launch` instead.
+
+**Issue 1c — `%USERPROFILE%` is CMD syntax, not PowerShell.** Use `$env:USERPROFILE`. E.g. `Set-Content "$env:USERPROFILE\.wslconfig"`.
+
+**Issue 1d — `getpwnam(knight) failed` after import.** `wsl --import` resets to root with no users, and `wsl.conf` `[user] default=` is ignored until the user actually exists. On first launch you're root — create the user first (`useradd -m -s /bin/bash -G sudo knight && passwd knight`), set `wsl.conf`, then `wsl --shutdown` and relaunch.
+
+---
+
+### Issue 2 — Cardano node `share/` tarball has double-nested path (Phase 4)
 
 **What happened:** Extracted the cardano-node tarball with `--strip-components=1 ./share` expecting configs to land at `~/.local/share/preprod/`. Instead they landed at `~/.local/share/share/preprod/`. The node immediately crash-looped with `Yaml file not found: /home/knight/.local/share/preprod/config.json`.
 
@@ -563,7 +784,7 @@ curl -L "${BASE_URL}/cardano-node-${VERSION}-${ARCH}.tar.gz" \
 
 ---
 
-### G3 — PostgreSQL peer authentication rejects non-matching OS username (Phase 5)
+### Issue 3 — PostgreSQL peer authentication rejects non-matching OS username (Phase 5)
 
 **What happened:** Running `psql -U midnight -d cexplorer` failed with `FATAL: Peer authentication failed for user "midnight"`. The OS user is `knight` but the Postgres role is `midnight` — peer auth requires them to match.
 
@@ -575,7 +796,7 @@ Also set pgpass with `127.0.0.1` as the host, not the socket path.
 
 ---
 
-### G4 — `~/.pgpass` resolves to wrong home directory (Phase 5)
+### Issue 4 — `~/.pgpass` resolves to wrong home directory (Phase 5)
 
 **What happened:** Running `echo "..." > ~/.pgpass` updated a pgpass file that wasn't at `/home/knight/.pgpass`. The `~` resolved to a different home (likely `/root/` depending on how the shell was invoked), so db-sync couldn't find credentials.
 
@@ -583,7 +804,7 @@ Also set pgpass with `127.0.0.1` as the host, not the socket path.
 
 ---
 
-### G5 — cardano-db-sync release URL in official docs has wrong tag (Phase 6)
+### Issue 5 — cardano-db-sync release URL in official docs has wrong tag (Phase 6)
 
 **What happened:** The Midnight FNO docs reference this URL for db-sync:
 ```
@@ -599,7 +820,7 @@ Always verify download size before extracting: `ls -lh <file>` — a valid tarba
 
 ---
 
-### G6 — cardano-db-sync cannot start until node socket exists (Phase 6)
+### Issue 6 — cardano-db-sync cannot start until node socket exists (Phase 6)
 
 **What happened:** After installing cardano-db-sync, attempting to start it before the cardano-node finished its ledger replay results in crash-loops — the socket at `~/cardano-data/node.socket` doesn't exist until the replay completes.
 
@@ -607,7 +828,7 @@ Always verify download size before extracting: `ls -lh <file>` — a valid tarba
 
 ---
 
-### G7 — cardano-db-sync `schema/` directory extracted read-only (Phase 6)
+### Issue 7 — cardano-db-sync `schema/` directory extracted read-only (Phase 6)
 
 **What happened:** The tarball extracts the `schema/` directory with permissions `dr-xr-xr-x` (no write bit for owner). Running `mv ~/tmp/schema ~/cardano-data/` fails with `Permission denied` because mv needs write permission on the source directory to remove it.
 
@@ -619,19 +840,21 @@ chmod -R u+w ~/cardano-data/schema
 
 ---
 
-### G8 — Tried `node-0.22.5` (latest) instead of `node-0.22.2` (docs) — both hit the same bootstrap issue (Phase 8)
+### Issue 8 — Tried `node-0.22.5` (latest) instead of `node-0.22.2` (docs) — both hit the same bootstrap issue (Phase 8)
 
 **What happened:** The official Midnight FNO Preprod Notion docs pin the install to `node-0.22.2`. GitHub shows `node-0.22.5` as the latest `0.x.x` stable release. We initially installed `0.22.5` to pick up any fixes in the newer release.
 
-**Result:** Both `0.22.2` and `0.22.5` produce the identical bootstrap error (see G14 — `Main chain state ... not found`). The error is the same block hash, same error message, same behaviour on both versions. This confirms the issue is **not version-specific** — it is a fundamental bootstrap sequencing requirement affecting all fresh nodes against the current live preprod network.
+**Result:** Both `0.22.2` and `0.22.5` produce the identical bootstrap error (see Issue 14 — `Main chain state ... not found`). The error is the same block hash, same error message, same behaviour on both versions. This confirms the issue is **not version-specific** — it is a fundamental bootstrap sequencing requirement affecting all fresh nodes against the current live preprod network.
 
-**Fix:** Use `node-0.22.2` as specified in the official docs. Do not chase the latest release expecting it to fix this error — it won't. The underlying cause is the FNO whitelisting state (see G14), not the binary version.
+**Fix:** Use `node-0.22.2` as specified in the official docs. Do not chase the latest release expecting it to fix this error — it won't. The underlying cause is the FNO whitelisting state (see Issue 14), not the binary version.
 
 > Note: The `1.x.x` releases are all pre-release RCs (`node-1.0.0-toolkit-1.0.0-rc.x`). Do **not** use these for FNO preprod — use `0.22.2` as documented.
 
 ---
 
-### G9 — cardano-node crashes at `StartedInitChainSelection` on WSL — Unix socket on NTFS (Phases 4 & 6)
+### Issue 9 — cardano-node crashes at `StartedInitChainSelection` on WSL — Unix socket on NTFS (Phases 4 & 6)
+
+**Symptom:** cardano-node completes full ledger replay (~90% progress), then dies cleanly at exactly the `StartedInitChainSelection` log line with no OOM or signal.
 
 **What happened:** cardano-node ran the full ledger replay (~90%), then died every single time right after the `StartedInitChainSelection` log line — clean exit, no OOM, no signal. Took a while to figure out. The `--socket-path` was pointing inside `~/cardano-data/db/`, which is a symlink to `/mnt/d/cardano/db` on NTFS. Turns out **WSL DrvFS doesn't support Unix domain sockets** — the node gets all the way through replay, then fails the moment it tries to create the socket on NTFS.
 
@@ -645,7 +868,9 @@ chmod -R u+w ~/cardano-data/schema
 
 ---
 
-### G10 — `midnight-node key generate` panics: `failed reading default.toml` (Phase 8)
+### Issue 10 — `midnight-node key generate` panics: `failed reading default.toml` (Phase 8)
+
+**Symptom:** Every `midnight-node key generate` command immediately panics with `failed reading default.toml at path /home/knight/res/cfg/default.toml: No such file or directory`, even though you extracted the tarball.
 
 **What happened:** All three `midnight-node key generate` commands immediately panicked with `failed reading default.toml at path /home/knight/res/cfg/default.toml: No such file or directory`. The binary looks for its config at `~/res/cfg/default.toml` relative to the working directory.
 
@@ -659,7 +884,9 @@ rmdir ~/res/res
 
 ---
 
-### G11 — `midnight-node key generate-node-key` requires `--chain` flag (Phase 8)
+### Issue 11 — `midnight-node key generate-node-key` requires `--chain` flag (Phase 8)
+
+**Symptom:** `midnight-node key generate-node-key` or `midnight-node key insert` exits immediately with `Input("chainspec_genesis_block not configured")` or a `NotFound` IO error.
 
 **What happened:** Running `midnight-node key generate-node-key` or `midnight-node key insert` without a chain spec produced: `Input("chainspec_genesis_block not configured")` and a `NotFound` IO error.
 
@@ -676,7 +903,9 @@ midnight-node key insert ... \
 
 ---
 
-### G12 — `DB_SYNC_POSTGRES_CONNECTION_STRING` must be a URL, not key=value format (Phase 8)
+### Issue 12 — `DB_SYNC_POSTGRES_CONNECTION_STRING` must be a URL, not key=value format (Phase 8)
+
+**Symptom:** midnight-node starts then immediately errors: `Failed to create db-sync main chain follower: error with configuration: relative URL without a base`.
 
 **What happened:** Setting the env var as `"host=127.0.0.1 port=5432 dbname=cexplorer user=midnight password=midnight"` (libpq key=value format) caused the node to error: `Failed to create db-sync main chain follower: error with configuration: relative URL without a base`.
 
@@ -687,11 +916,13 @@ export DB_SYNC_POSTGRES_CONNECTION_STRING="postgresql://midnight:your_secure_pas
 
 ---
 
-### G13 — Node stuck at `best: #0` with 0 peers after repeated restarts (Phase 8)
+### Issue 13 — Node stuck at `best: #0` with 0 peers after repeated restarts (Phase 8)
+
+**Symptom:** `best: #0` with `0 peers` persists indefinitely after a restart. The node connected to peers on a previous run but never reconnects now — peers are immediately dropped.
 
 **What happened:** The node showed `0 peers` indefinitely after a restart and never reconnected, even though it had connected to peers on a previous run.
 
-**Root cause:** Preprod peers soft-ban PeerIDs that repeatedly fail block verification. While the node is not yet whitelisted (see G14), the inherent data provider fails on every peer connection, ending each attempt with a protocol error. After a few cycles the PeerID is soft-banned by all live preprod peers and subsequent restarts with the same PeerID are immediately dropped.
+**Root cause:** Preprod peers soft-ban PeerIDs that repeatedly fail block verification. While the node is not yet whitelisted (see Issue 14), the inherent data provider fails on every peer connection, ending each attempt with a protocol error. After a few cycles the PeerID is soft-banned by all live preprod peers and subsequent restarts with the same PeerID are immediately dropped.
 
 **Fix:** Generate a fresh network identity key so the node presents a new PeerID to peers:
 ```bash
@@ -706,7 +937,9 @@ midnight-node key inspect-node-key --file "$NETWORK_DIR/secret_ed25519"   # conf
 
 ---
 
-### G14 — Block import stalled at `best: #0` on a fresh node (Phase 8)
+### Issue 14 — Block import stalled at `best: #0` on a fresh node (Phase 8)
+
+**Symptom:** Node has peers (`5–7 peers` in logs), db-sync is fully synced, but `best: #0` never advances. Logs repeat `Validator inherent data must be provided` on every block announcement.
 
 **What happened:** After connecting to peers, the node repeatedly logs `Validator inherent data must be provided` when verifying block announcements. Occurs with both v0.22.2 and v0.22.5.
 
