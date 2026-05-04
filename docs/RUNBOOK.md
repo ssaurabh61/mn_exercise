@@ -623,7 +623,7 @@ chmod -R u+w ~/cardano-data/schema
 
 **Result:** Both `0.22.2` and `0.22.5` produce the identical bootstrap error (see G14 — `Main chain state ... not found`). The error is the same block hash, same error message, same behaviour on both versions. This confirms the issue is **not version-specific** — it is a fundamental bootstrap sequencing requirement affecting all fresh nodes against the current live preprod network.
 
-**Fix:** Use `node-0.22.2` as specified in the official docs. Do not chase the latest release expecting it to fix the bootstrap issue — it won't. The fix requires a chain snapshot from Midnight Foundation (see G14).
+**Fix:** Use `node-0.22.2` as specified in the official docs. Do not chase the latest release expecting it to fix the bootstrap error — it won't. The error is resolved by waiting for db-sync to fully sync (see G14), not by changing the binary version.
 
 > Note: The `1.x.x` releases are all pre-release RCs (`node-1.0.0-toolkit-1.0.0-rc.x`). Do **not** use these for FNO preprod — use `0.22.2` as documented.
 
@@ -689,7 +689,7 @@ export DB_SYNC_POSTGRES_CONNECTION_STRING="postgresql://midnight:your_secure_pas
 
 **What happened:** The node showed `0 peers` indefinitely after a restart and never reconnected, even though it had connected to peers on a previous run.
 
-**Root cause:** Preprod peers soft-ban PeerIDs that repeatedly fail block verification. Because the node cannot import blocks from genesis (see G14), every connection attempt ends in a protocol error. After a few cycles the PeerID gets banned by all live preprod peers, and subsequent restarts with the same PeerID are immediately dropped.
+**Root cause:** Preprod peers soft-ban PeerIDs that repeatedly fail block verification. While db-sync is still syncing (see G14), the inherent data provider fails on every peer connection, ending each attempt with a protocol error. After a few cycles the PeerID is soft-banned by all live preprod peers and subsequent restarts with the same PeerID are immediately dropped.
 
 **Fix:** Generate a fresh network identity key so the node presents a new PeerID to peers:
 ```bash
@@ -704,21 +704,44 @@ midnight-node key inspect-node-key --file "$NETWORK_DIR/secret_ed25519"   # conf
 
 ---
 
-### G14 — Block import stalled at `best: #0` due to preprod runtime upgrade (Phase 8)
+### G14 — Block import stalled at `best: #0` while db-sync is syncing (Phase 8)
 
-**What happened:** After connecting to peers, the node repeatedly panics with `Validator inherent data must be provided` when verifying block announcements from peers. The same block hash (`0xd64fcd69...`) is rejected from every peer. This occurs with both v0.22.2 and v0.22.5 of the binary.
+**What happened:** After connecting to peers, the node repeatedly logs `Validator inherent data must be provided` (also seen as `Failure creating inherent data provider: 'No latest block on chain.' not found`) when verifying block announcements. The same block hash (`0xd64fcd69...`) is rejected from every peer. This occurs with both v0.22.2 and v0.22.5 of the binary.
 
-**Root cause:** The Midnight preprod network has undergone runtime upgrades since v0.22.2 was released. The current live runtime WASM (at block ~630,000+) contains a committee selection pallet that panics when asked to verify block inherents without existing chain state (i.e., from genesis). This is a chicken-and-egg problem: block announcement verification triggers the panic before any chain state exists.
+**Root cause:** midnight-node's inherent data provider queries Cardano state through db-sync to build block verification data (committee selection, Cardano epoch info). If db-sync has not fully synced the Cardano chain yet, the required Cardano state is absent and the inherent provider fails. The official `midnight-node-docker` troubleshooting documentation explicitly states:
 
-**This is a bootstrap problem** — you can't fix it by switching binary version, `--sync` mode, env vars, or flags. Here's what's actually happening:
+> *"If you encounter this message on the midnight node it's likely that the cardano-node is still syncing and it will go away once it's fully synced."*
+> — [`midnightntwrk/midnight-node-docker` README](https://github.com/midnightntwrk/midnight-node-docker)
 
-Midnight-node keeps its own internal cache of Cardano state as it imports Midnight blocks. A fresh node has never imported any blocks (`best: #0`), so that cache is empty. When peers announce their tip, midnight-node tries to verify it by looking up a Cardano block hash in that internal cache — not in db-sync — and finds nothing. It drops the peer. Every peer. So nothing ever imports.
+This is therefore **expected transient behaviour** during the hours/days that Cardano preprod db-sync takes to fully sync from genesis (~40 GB, can take 12–48 h on adequate hardware).
 
-**Verified:** The referenced Cardano block (`aee88622...`, block 4,526,090) IS present in db-sync. The problem is midnight-node's own internal state, not db-sync.
+**Fix:** Wait for db-sync to reach 100 % sync. Monitor with:
+```sql
+-- Run inside the db-sync PostgreSQL container
+SELECT 100 * (
+  EXTRACT(EPOCH FROM (MAX(time) AT TIME ZONE 'UTC')) -
+  EXTRACT(EPOCH FROM (MIN(time) AT TIME ZONE 'UTC'))
+) / (
+  EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC')) -
+  EXTRACT(EPOCH FROM (MIN(time) AT TIME ZONE 'UTC'))
+) AS sync_percent
+FROM block;
+```
+Once `sync_percent` reaches 100, restart midnight-node. Block import should proceed normally.
 
-**Fix:** A chain database snapshot from Midnight Foundation. In production FNO onboarding, Midnight Foundation provides a snapshot after `partner-chains-public-keys.json` is submitted and keys are whitelisted. The snapshot provides a pre-built midnight-node paritydb from a recent block, skipping the bootstrap gap entirely.
+**Speeding up the wait — Mithril snapshots:** Cardano Foundation provides verified db-sync snapshots through [Mithril](https://mithril.network/). Restoring a Mithril snapshot dramatically shortens the initial db-sync time (minutes instead of days). The snapshot digest and certificate can be verified before restoration, making this safe for production.
 
-**Evidence captured:** Node connects to preprod network (up to 7 peers with fresh PeerID), downloads chain data at 50–150 kiB/s, db-sync queried successfully (slow SQL queries returning real committee data), all keys generated and keystore populated, `partner-chains-public-keys.json` produced. All infrastructure is correctly configured; the block import blocker is a bootstrap sequencing requirement in the FNO onboarding process. Full log committed at [`docs/evidence/midnight-node-log-evidence.txt`](evidence/midnight-node-log-evidence.txt).
+```bash
+# Example: list available preprod snapshots
+mithril-client --aggregator-endpoint https://aggregator.release-preprod.api.mithril.network/aggregator \
+  snapshot list
+```
+
+**Note for FNO validators:** Once db-sync is fully synced and midnight-node is producing blocks, the node must also be listed in the `permissioned_candidates` set on Cardano (i.e., keys submitted and whitelisted by Midnight Foundation) before it will be selected into the committee and be able to author or validate blocks as a validator.
+
+**Verified:** The referenced Cardano block (`aee88622...`, block 4,526,090) IS present in db-sync. db-sync itself is healthy; the issue is that it had not finished syncing the full chain at the time of testing.
+
+**Evidence captured:** Node connects to preprod network (up to 7 peers with fresh PeerID), downloads chain data at 50–150 kiB/s, db-sync queried successfully (slow SQL queries returning real committee data), all keys generated and keystore populated, `partner-chains-public-keys.json` produced. All infrastructure is correctly configured; the `best: #0` stall is expected to resolve once db-sync reaches 100 %. Full log committed at [`docs/evidence/midnight-node-log-evidence.txt`](evidence/midnight-node-log-evidence.txt).
 
 ---
 
