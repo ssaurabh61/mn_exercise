@@ -1,0 +1,54 @@
+2026-05-04 12:02:50 Midnight Node
+2026-05-04 12:02:50 ✌️  version 0.22.2-71fc6804
+2026-05-04 12:02:50 ❤️  by Substrate DevHub <https://github.com/substrate-developer-hub>, 2017-2026
+2026-05-04 12:02:50 📋 Chain specification: Midnight Preprod
+2026-05-04 12:02:50 🏷  Node name: knight-preprod-fno
+2026-05-04 12:02:50 👤 Role: FULL
+2026-05-04 12:02:50 💾 Database: ParityDb at /home/knight/data/chains/midnight_preprod/paritydb/full
+2026-05-04 12:02:51 Index idx_multi_asset_policy_name_hex already exists, skipping creation.
+2026-05-04 12:02:51 Index 'idx_ma_tx_out_ident' already exists
+2026-05-04 12:02:51 Index 'idx_tx_out_address' already exists
+2026-05-04 12:02:51 Index 'idx_ma_tx_out_tx_out_id_ident' already exists
+2026-05-04 12:02:51 Using candidate data source configuration: CandidateDataSourceCacheConfig { cardano_security_parameter: 432 }
+2026-05-04 12:02:51 Creating transaction pool txpool_type=ForkAware ready=Limit { count: 35, total_bytes: 20971520 } future=Limit { count: 3, total_bytes: 2097152 }
+2026-05-04 12:02:51 Using default protocol ID "sup" because none is configured in the chain specs
+2026-05-04 12:02:51 🏷  Local node identity is: 12D3KooWB3mKzDq7yDcnAaddfL2YzNMyrycegbtrh3X6PP4K85Vb
+2026-05-04 12:02:51 Running libp2p network backend
+2026-05-04 12:02:51 local_peer_id=12D3KooWB3mKzDq7yDcnAaddfL2YzNMyrycegbtrh3X6PP4K85Vb
+2026-05-04 12:02:51 💻 Operating system: linux
+2026-05-04 12:02:51 💻 CPU architecture: x86_64
+2026-05-04 12:02:51 💻 Target environment: gnu
+2026-05-04 12:02:51 💻 CPU: AMD Ryzen 5 4600H with Radeon Graphics
+2026-05-04 12:02:51 💻 CPU cores: 4
+2026-05-04 12:02:51 💻 Memory: 15360MB
+2026-05-04 12:02:51 💻 Kernel: 6.6.87.2-microsoft-standard-WSL2
+2026-05-04 12:02:51 💻 Linux distribution: Ubuntu 24.04.4 LTS
+2026-05-04 12:02:51 💻 Virtual machine: yes
+2026-05-04 12:02:51 📦 Highest known block at #0
+2026-05-04 12:02:51 〽️ Prometheus exporter started at 127.0.0.1:9615
+2026-05-04 12:02:51 Running JSON-RPC server: addr=127.0.0.1:9933,[::1]:9933
+2026-05-04 12:02:51 MemoryMonitorService: memory monitoring disabled (threshold=0)
+2026-05-04 12:02:51 🥩 BEEFY gadget waiting for BEEFY pallet to become available...
+2026-05-04 12:02:55 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWLZYwa9P75d6NUDMZHKxoFx8qNxMTaUJ2YmKUScdCjRcg): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:02:56 ⚙️  Syncing, target=#631090 (1 peers), best: #0 (0xdf83…361b), finalized #0 (0xdf83…361b), ⬇ 50.0kiB/s ⬆ 1.2kiB/s
+2026-05-04 12:02:57 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWNrUBs22FfmgjqFMa9ZqKED2jnxwsXWw5E4q2XVwN35TJ): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:02 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWGBZQYYjCpbafVpvP53oPxNjtJE63CGaUdeNigmJyz49G): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:03 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWFtvPa1W9RicKnuQfuxy8QsLncUdo9N1opNLh9DE3sdXH): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:04 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWLMfECVArGLqktn2VQvopvTLV7ZY9yXGAgRcpntpPkht9): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:11 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWB4cVvEVKZ5EZhXvAPUkmYGiKacwioc4d3zN33rB195C3): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:12 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWFcxL7MH6P3EgtY7LKEV3LRvdqKamnsVFUqQTZsb6ka4i): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:13 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWAWQ7J5T55j9xq1X7EWTZQriKXkV7HWveNT6pjhJvDJdW): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:14 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWAn2gB61xzLZCsW2fiabNAK5w4NyFTMZ7qC2guXxUuSUd): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:15 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWLaf5nQzmrc6prZ5qVbf5xXyDywa5MfV9VcGch3W6KusK): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:17 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWFoBAmgoAS4mQDMNKrpsAseUpvZygaifi3YeBp9oGd3xu): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:19 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWRtS7HoM9C1MVomjWyvCoFF8vMScbGN55kec3VJXp31Er): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:22 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWCUkHmepnfyuw4pcjJB4pgjZXHkTw8uQ8Ce65WsVdHE6e): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:22 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWCKsowLxX9rJjNyvFaakFZ28tt7faetstSuAegTeGrq82): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:24 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWDKE9aasHDyLLunMqRUZYmS8fQRw9aXLUCB29ZqDLkReJ): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:24 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooW9qJKsUHcik2iteX69qG6PmUXgpCVzo9XZ2NjTK5Fvvi1): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:03:26 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWE9dgnkuzdP72fh23KAa4WDvXk4oXrWKpT8PwodBjKsH2): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:04:10 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWFcxL7MH6P3EgtY7LKEV3LRvdqKamnsVFUqQTZsb6ka4i): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:04:32 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWAWQ7J5T55j9xq1X7EWTZQriKXkV7HWveNT6pjhJvDJdW): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:04:32 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWAn2gB61xzLZCsW2fiabNAK5w4NyFTMZ7qC2guXxUuSUd): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:10:37 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWQxxUgq7ndPfAaCFNbAxtcKYxrAzTxDfRGNktF75SxdX5): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
+2026-05-04 12:10:48 💔 Verification failed for block 0xd64fcd69a4022baae4552501a5677417ccbd8e9d68a9671a9316fbb9355af01b received from (12D3KooWB6fR4Ca9QpJNghDXJ25riasMSE1w8j88WQqnZRd7TrHZ): "Main chain state aee88622d9dd718d7e898cb298ce4bea044a0787aaa65a468bb3ceb88a101fd2 referenced in imported block at slot 295671834 with timestamp 1774031004000 not found"
